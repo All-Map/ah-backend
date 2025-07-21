@@ -8,14 +8,20 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from 'src/entities/user.entity';
 import { MailModule } from 'src/mail/mail.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User]),
     PassportModule,
-    JwtModule.register({
-      secret: process.env.SUPABASE_JWT_SECRET,
-      signOptions: { expiresIn: '7d' },
+    ConfigModule.forRoot({ isGlobal: true }),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'), // Use JWT_SECRET from .env
+        signOptions: { expiresIn: '7d' },
+      }),
     }),
     SupabaseModule,
     MailModule,

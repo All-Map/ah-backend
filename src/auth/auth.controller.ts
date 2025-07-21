@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Res } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -18,12 +18,14 @@ export class AuthController {
     return this.authService.register(registerDto);
   }
 
-  @Post('login')
-  async login(@Body() loginDto: LoginDto) {
-    const user = await this.authService.validateUser(loginDto.email, loginDto.password);
-    if (!user) throw new UnauthorizedException();
-    return this.authService.login(user);
-  }
+@Post('login')
+async login(@Body() loginDto: LoginDto) {
+  const user = await this.authService.validateUser(loginDto.email, loginDto.password);
+  if (!user) throw new UnauthorizedException();
+  
+  return this.authService.login(user, loginDto.password); // ✅ Pass password here
+}
+
 
   @Post('request-reset')
   async requestReset(@Body('email') email: string) {
@@ -31,14 +33,24 @@ export class AuthController {
     return { message: 'Reset instructions sent if email exists' };
   }
 
-  @Post('reset-password')
-  async resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto);
-  }
+@Post('reset-password')
+async resetPassword(@Body() dto: ResetPasswordDto) {
+  await this.authService.resetPassword(dto);
+  return { 
+    success: true, 
+    message: 'Password has been reset successfully' 
+  };
+}
 
-  @Get('verify/:token')
-  async verifyEmail(@Param('token') token: string) {
-    return this.authService.verifyEmail(token);
+    @Get('verify/:token')
+    async verifyEmail(@Param('token') token: string) {
+      const result = await this.authService.verifyEmail(token);
+      return result; // Return JSON, not a redirect
+    }
+
+  @Post('resend-verification')
+  async resendVerificationEmail(@Body() { email }: { email: string }) {
+    return this.authService.resendVerificationEmail(email);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -54,3 +66,4 @@ export class AuthController {
     return { message: 'Admin access granted' };
   }
 }
+
