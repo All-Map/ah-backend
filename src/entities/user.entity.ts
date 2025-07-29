@@ -1,5 +1,6 @@
-import { Entity, Column, PrimaryGeneratedColumn, BeforeInsert } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, BeforeInsert, ManyToMany } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { AdminVerification } from './admin-verification.entity';
 
 @Entity('users')
 export class User {
@@ -24,6 +25,15 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   reset_token_expiry: Date;
 
+  @Column({type: 'timestamptz', nullable: true})
+  verification_token_expires_at: Date;
+
+  @Column({type: 'date', nullable: true})
+  verified_at: Date;
+
+  @Column({type: 'enum', enum: ['unverified', 'pending', 'verified'], default: 'unverified'})
+  status: string;
+
   @Column({ 
     type: 'enum',
     enum: ['student', 'hostel_admin', 'super_admin'],
@@ -44,4 +54,14 @@ export class User {
   async comparePassword(attempt: string): Promise<boolean> {
     return bcrypt.compare(attempt, this.password_hash);
   }
+
+@ManyToMany(() => AdminVerification, verification => verification.user)
+verification_requests: AdminVerification[];
+  
+}
+
+export enum UserRole {
+  STUDENT = 'student',
+  HOSTEL_ADMIN = 'hostel_admin',
+  SUPER_ADMIN = 'super_admin',
 }

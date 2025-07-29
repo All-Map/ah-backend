@@ -57,4 +57,31 @@ private renderTemplate(templateName: string, variables: Record<string, string>) 
       html,
     });
   }
+
+  async sendVerificationApproval(email: string): Promise<void> {
+  const subject = 'Admin Verification Approved';
+  const html = `<p>Your admin verification request has been approved. You can now access the admin dashboard.</p>`;
+  await this.sendEmail(email, subject, html);
+}
+
+async sendVerificationRejection(email: string, reason: string): Promise<void> {
+  const subject = 'Admin Verification Rejected';
+  const html = `<p>Your admin verification request was rejected. Reason: ${reason}</p>`;
+  await this.sendEmail(email, subject, html);
+}
+
+  async sendNewVerificationRequest(email: string): Promise<void> {
+  const subject = 'New Admin Verification Request';
+  const html = `<p>A new admin verification request needs your review.</p>`;
+  await this.sendEmail(email, subject, html);
+}
+
+  private async sendEmail(email: string, subject: string, html: string): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.config.get('EMAIL_FROM'),
+      to: email,
+      subject,
+      html,
+    });
+  }
 }

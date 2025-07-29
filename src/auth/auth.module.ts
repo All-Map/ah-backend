@@ -9,25 +9,34 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from 'src/entities/user.entity';
 import { MailModule } from 'src/mail/mail.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { AdminVerification } from 'src/entities/admin-verification.entity';
+import { AdminVerificationService } from './admin-verification.service';
+import { AdminController } from './admin.controller';
+import { FileUploadService } from 'src/file/file-upload.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, AdminVerification]),
     PassportModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET'), // Use JWT_SECRET from .env
+        secret: config.get<string>('JWT_SECRET'),
         signOptions: { expiresIn: '7d' },
       }),
     }),
     SupabaseModule,
     MailModule,
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  controllers: [AuthController, AdminController],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    AdminVerificationService, // <-- move here
+    FileUploadService,        // <-- move here
+  ],
   exports: [AuthService],
 })
 export class AuthModule {}
