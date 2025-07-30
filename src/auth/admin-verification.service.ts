@@ -106,4 +106,21 @@ export class AdminVerificationService {
 
     return data;
   }
+  
+async getUserVerificationStatus(userId: string): Promise<AdminVerification | null> {
+  const { data, error } = await this.supabase.client
+    .from('admin_verifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error('Failed to fetch verification status');
+  }
+  
+  return data;
+}
+
 }

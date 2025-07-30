@@ -25,38 +25,37 @@ export class FileUploadService {
 
   constructor(private readonly supabase: SupabaseService) {}
 
-  async uploadFile(bucketName: string, file: import('multer').File): Promise<string> {
-    try {
-      // Check if bucket exists, create if it doesn't
-      await this.ensureBucketExists(bucketName);
+// Add this method to get public URL
+getPublicUrl(bucketName: string, filePath: string): string {
+  const { data } = this.supabase.client
+    .storage
+    .from(bucketName)
+    .getPublicUrl(filePath);
+  return data.publicUrl;
+}
 
-      const fileName = `${Date.now()}-${file.originalname}`;
-      const filePath = `uploads/${fileName}`;
+// Modify uploadFile method:
+async uploadFile(bucketName: string, file: import('multer').File): Promise<string> {
+  try {
+    await this.ensureBucketExists(bucketName);
+    const fileName = `${Date.now()}-${file.originalname}`;
+    const filePath = `uploads/${fileName}`;
 
-      const { data, error } = await this.supabase.client
-        .storage
-        .from(bucketName)
-        .upload(filePath, file.buffer, {
-          contentType: file.mimetype,
-        });
+    const { error } = await this.supabase.client
+      .storage
+      .from(bucketName)
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+      });
 
-      if (error) {
-        this.logger.error(`File upload failed: ${error.message}`);
-        throw new Error(`File upload failed: ${error.message}`);
-      }
-
-      // Get public URL
-      const { data: publicUrlData } = this.supabase.client
-        .storage
-        .from(bucketName)
-        .getPublicUrl(filePath);
-
-      return publicUrlData.publicUrl;
-    } catch (error) {
-      this.logger.error(`File upload error: ${error.message}`);
-      throw error;
-    }
+    if (error) throw new Error(`File upload failed: ${error.message}`);
+    
+    return filePath; // Return the path only, not the full URL
+  } catch (error) {
+    this.logger.error(`File upload error: ${error.message}`);
+    throw error;
   }
+}
 
   private async ensureBucketExists(bucketName: string): Promise<void> {
     try {
@@ -77,7 +76,7 @@ export class FileUploadService {
         const { error: createError } = await this.supabase.client
           .storage
           .createBucket(bucketName, {
-            public: false, // Set to true if you want public access
+            public: true, // Set to true if you want public access
             allowedMimeTypes: ['image/*', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
           });
 

@@ -32,17 +32,17 @@ export class AuthService {
 
 async register(registerDto: RegisterDto): Promise<User> {
   // Verify school domain
-  const domain = registerDto.email.split('@')[1];
-  const { data: school, error: schoolError } = await this.supabase
-    .client
-    .from('schools')
-    .select('id')
-    .eq('domain', domain)
-    .single();
+  // const domain = registerDto.email.split('@')[1];
+  // const { data: school, error: schoolError } = await this.supabase
+  //   .client
+  //   .from('schools')
+  //   .select('id')
+  //   .eq('domain', domain)
+  //   .single();
   
-  if (schoolError || !school) {
-    throw new BadRequestException('Invalid school email domain');
-  }
+  // if (schoolError || !school) {
+  //   throw new BadRequestException('Invalid school email domain');
+  // }
 
   // Check if user already exists
   const { data: existingUser } = await this.supabase
@@ -66,7 +66,7 @@ const hashedPassword = await bcrypt.hash(registerDto.password_hash, 10);
 const userData = {
   ...registerDto,
   password_hash: hashedPassword,
-  school_id: school.id,
+  // school_id: school.id,
   verification_token: verificationToken,
   verification_token_expires_at: tokenExpiry.toISOString(),
   is_verified: false
