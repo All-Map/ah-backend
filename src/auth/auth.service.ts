@@ -53,7 +53,7 @@ async register(registerDto: RegisterDto): Promise<User> {
     .single();
 
   if (existingUser?.is_verified) {
-    throw new ConflictException('User already exists and is verified');
+    throw new ConflictException('User already exists');
   }
 
   
@@ -282,6 +282,8 @@ async resetPassword(dto: ResetPasswordDto) {
       reset_token_expiry: null
     })
     .eq('id', user.id);
+
+  return { message: 'Password has been reset successfully' };
 }
 
   private async findUserByEmail(email: string): Promise<User | null> {

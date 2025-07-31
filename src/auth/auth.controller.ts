@@ -22,10 +22,13 @@ export class AuthController {
 async login(@Body() loginDto: LoginDto) {
   const user = await this.authService.validateUser(loginDto.email, loginDto.password);
   if (!user) throw new UnauthorizedException();
-  
-  return this.authService.login(user, loginDto.password); // ✅ Pass password here
-}
 
+    if (!user.is_verified) {
+    throw new UnauthorizedException('Please verify your email first');
+  }
+
+  return this.authService.login(user, loginDto.password);
+}
 
   @Post('request-reset')
   async requestReset(@Body('email') email: string) {
