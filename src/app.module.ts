@@ -7,6 +7,9 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { typeOrmConfig } from './config/typeorm.config';
 import { AuthModule } from './auth/auth.module';
+import { HostelsModule } from './hostels/hostels.module';
+import { CloudinaryService } from './cloudinary/cloudinary.service';
+import { RoomsModule } from './rooms/rooms.module';
 
 @Module({
   imports: [
@@ -14,12 +17,14 @@ import { AuthModule } from './auth/auth.module';
     ThrottlerModule.forRoot([{ ttl: 60, limit: 100 }]),
     TypeOrmModule.forRootAsync(typeOrmConfig),
     AuthModule,
+    HostelsModule,
+    RoomsModule
     // UsersModule,
     // HostelsModule,
     // SchoolsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, CloudinaryService],
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {

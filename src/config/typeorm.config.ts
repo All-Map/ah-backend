@@ -7,7 +7,7 @@ export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
     type: 'postgres',
     url: configService.get<string>('SUPABASE_DB_URL'),
     autoLoadEntities: true,
-    synchronize: true, // set to false in production
+    synchronize: false, // set to false in production
   }),
   inject: [ConfigService],
 };
