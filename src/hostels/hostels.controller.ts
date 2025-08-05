@@ -67,7 +67,7 @@ export class HostelsController {
   }
 
   @Put(':id')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  // @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
   @UseInterceptors(FilesInterceptor('images'))
   update(
     @Param('id') id: string,

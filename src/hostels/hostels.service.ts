@@ -90,6 +90,9 @@ export class HostelsService {
       // Prepare data for insertion
       const insertData = {
         name: dtoData.name,
+        email: dtoData.email,
+        phone: dtoData.phone,
+        SecondaryNumber: dtoData.SecondaryNumber,
         description: dtoData.description,
         address: dtoData.address,
         admin_id: adminId,
@@ -170,63 +173,146 @@ export class HostelsService {
     }
   }
 
-  async update(id: string, updateHostelDto: UpdateHostelDto, files?: import('multer').File[]) {
-    try {
-      const existingHostel = await this.findOne(id);
-      let imageUpdates: string[] = [];
+async update(id: string, updateHostelDto: UpdateHostelDto, files?: import('multer').File[]) {
+  try {
+    const existingHostel = await this.findOne(id);
+    let imageUpdates: string[] = [];
 
-      // Handle image uploads
-      if (files && files.length > 0) {
-        for (const file of files) {
-          try {
-            const url = await this.cloudinary.uploadImage(file);
-            imageUpdates.push(url);
-          } catch (uploadError) {
-            console.error('Failed to upload image during update:', uploadError);
-            throw new BadRequestException(`Failed to upload image: ${uploadError.message}`);
-          }
+    // Handle image uploads
+    if (files && files.length > 0) {
+      for (const file of files) {
+        try {
+          const url = await this.cloudinary.uploadImage(file);
+          imageUpdates.push(url);
+        } catch (uploadError) {
+          console.error('Failed to upload image during update:', uploadError);
+          throw new BadRequestException(`Failed to upload image: ${uploadError.message}`);
         }
       }
+    }
 
-      // Update location if provided
-      let locationUpdate = {};
-      if (updateHostelDto.location) {
-        if (typeof updateHostelDto.location.lng !== 'number' || typeof updateHostelDto.location.lat !== 'number') {
-          throw new BadRequestException('Invalid location data provided');
+    // Parse and validate location if provided
+    let locationUpdate = {};
+    if (updateHostelDto.location) {
+      console.log('Location data received for update:', updateHostelDto.location, typeof updateHostelDto.location);
+      
+      let parsedLocation;
+      
+      // Parse location if it's a string
+      if (typeof updateHostelDto.location === 'string') {
+        try {
+          parsedLocation = JSON.parse(updateHostelDto.location);
+          console.log('Parsed location from string:', parsedLocation);
+        } catch (parseError) {
+          console.error('Location parse error:', parseError);
+          throw new BadRequestException('Invalid location JSON format');
         }
-        locationUpdate = {
-          location: this.toPoint(
-            updateHostelDto.location.lng, 
-            updateHostelDto.location.lat
-          )
-        };
-      }
-
-      const updateData = {
-        ...updateHostelDto,
-        ...locationUpdate,
-        images: [...existingHostel.images, ...imageUpdates],
-        updated_at: new Date().toISOString()
-      };
-
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .update(updateData)
-        .eq('id', id)
-        .select('*')
-        .single();
-
-      if (error) {
-        console.error('Supabase update error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
+      } else {
+        parsedLocation = updateHostelDto.location;
+        console.log('Location already parsed:', parsedLocation);
       }
       
-      return data;
-    } catch (error) {
-      console.error('Error in update method:', error);
+      // Validate location data
+      console.log('Validating location:', parsedLocation);
+      console.log('lng type:', typeof parsedLocation?.lng, 'value:', parsedLocation?.lng);
+      console.log('lat type:', typeof parsedLocation?.lat, 'value:', parsedLocation?.lat);
+      
+      if (!parsedLocation || 
+          typeof parsedLocation.lng !== 'number' || 
+          typeof parsedLocation.lat !== 'number' ||
+          isNaN(parsedLocation.lng) ||
+          isNaN(parsedLocation.lat)) {
+        console.error('Location validation failed:', parsedLocation);
+        throw new BadRequestException(`Invalid location data provided. Expected numbers, got lng: ${typeof parsedLocation?.lng} (${parsedLocation?.lng}), lat: ${typeof parsedLocation?.lat} (${parsedLocation?.lat})`);
+      }
+      
+      locationUpdate = {
+        location: this.toPoint(parsedLocation.lng, parsedLocation.lat)
+      };
+    }
+
+    // Parse amenities if provided
+    let amenitiesUpdate = {};
+    if (updateHostelDto.amenities) {
+      console.log('Amenities data received for update:', updateHostelDto.amenities, typeof updateHostelDto.amenities);
+      
+      let parsedAmenities;
+      
+      // Parse amenities if it's a string
+      if (typeof updateHostelDto.amenities === 'string') {
+        try {
+          parsedAmenities = JSON.parse(updateHostelDto.amenities);
+          console.log('Parsed amenities from string:', parsedAmenities);
+        } catch (parseError) {
+          console.error('Amenities parse error:', parseError);
+          throw new BadRequestException('Invalid amenities JSON format');
+        }
+      } else {
+        parsedAmenities = updateHostelDto.amenities;
+        console.log('Amenities already parsed:', parsedAmenities);
+      }
+      
+      // Validate amenities structure
+      const expectedAmenities = ['wifi', 'laundry', 'cafeteria', 'parking', 'security'];
+      const isValidAmenities = parsedAmenities && 
+        typeof parsedAmenities === 'object' &&
+        expectedAmenities.every(amenity => 
+          parsedAmenities.hasOwnProperty(amenity) && 
+          typeof parsedAmenities[amenity] === 'boolean'
+        );
+      
+      if (!isValidAmenities) {
+        console.error('Invalid amenities structure:', parsedAmenities);
+        throw new BadRequestException('Invalid amenities data structure');
+      }
+      
+      amenitiesUpdate = { amenities: parsedAmenities };
+    }
+
+    // Prepare update data - exclude location and amenities from spread to avoid conflicts
+    const { location, amenities, ...restOfDto } = updateHostelDto;
+    
+    const updateData = {
+      ...restOfDto,
+      ...locationUpdate,
+      ...amenitiesUpdate,
+      images: [...(existingHostel.images || []), ...imageUpdates],
+      updated_at: new Date().toISOString()
+    };
+
+    console.log('Update data being sent to database:', updateData);
+
+    const { data, error } = await this.supabase.client
+      .from('hostels')
+      .update(updateData)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('Supabase update error:', error);
+      throw new BadRequestException(`Database error: ${error.message}`);
+    }
+    
+    console.log('Successfully updated hostel:', data);
+    return data;
+  } catch (error) {
+    console.error('Error in update method:', error);
+    
+    // Clean up uploaded images if database update failed
+    if (files && files.length > 0) {
+      console.log('Cleaning up uploaded images due to error');
+      // Note: You might want to implement cleanup logic here
+    }
+    
+    // Re-throw the error with more context
+    if (error instanceof BadRequestException || error instanceof NotFoundException) {
       throw error;
     }
+    
+    throw new BadRequestException(`Failed to update hostel: ${error.message}`);
   }
+}
 
   async removeImage(id: string, imageUrl: string) {
     try {

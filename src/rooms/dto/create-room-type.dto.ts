@@ -1,6 +1,5 @@
 import { 
   IsString, IsNotEmpty, IsNumber, IsArray, IsOptional, IsPositive, 
-  isNumber
 } from 'class-validator';
 
 export class CreateRoomTypeDto {
