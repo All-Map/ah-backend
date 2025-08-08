@@ -18,7 +18,7 @@ import { RoomsModule } from './rooms/rooms.module';
     TypeOrmModule.forRootAsync(typeOrmConfig),
     AuthModule,
     HostelsModule,
-    RoomsModule
+    RoomsModule,
     // UsersModule,
     // HostelsModule,
     // SchoolsModule,

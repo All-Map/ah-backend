@@ -3,4 +3,6 @@ export class RegisterDto {
   password_hash: string;
   role: string;
   school_id?: string;
+  name?: string;
+  phone?: string;
 }

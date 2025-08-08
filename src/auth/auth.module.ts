@@ -13,6 +13,7 @@ import { AdminVerification } from 'src/entities/admin-verification.entity';
 import { AdminVerificationService } from './admin-verification.service';
 import { AdminController } from './admin.controller';
 import { FileUploadService } from 'src/file/file-upload.service';
+import { ProfileModule } from 'src/profile/profile.module';
 
 @Module({
   imports: [
@@ -29,13 +30,14 @@ import { FileUploadService } from 'src/file/file-upload.service';
     }),
     SupabaseModule,
     MailModule,
+    ProfileModule
   ],
   controllers: [AuthController, AdminController],
   providers: [
     AuthService,
     JwtStrategy,
     AdminVerificationService, // <-- move here
-    FileUploadService,        // <-- move here
+    FileUploadService,
   ],
   exports: [AuthService],
 })

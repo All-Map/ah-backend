@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Res } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Res, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -8,14 +8,26 @@ import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { User } from 'src/entities/user.entity';
 import { RolesGuard } from './guards/roles.guard';
+import { ProfileService } from 'src/profile/profile.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService, private readonly profileService: ProfileService) {};
 
   @Post('register')
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
+  }
+
+    @Post('register-student')
+  async registerStudent(@Body() registerDto: RegisterDto) {
+    return this.authService.registerStudent(registerDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('user-profile')
+  async getUserProfile(@CurrentUser() user: User) {
+    return this.profileService.getUserProfile(user.id);
   }
 
 @Post('login')
