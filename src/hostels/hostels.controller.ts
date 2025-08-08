@@ -61,6 +61,22 @@ export class HostelsController {
     return this.roomsService.getRoomTypesByHostelId(hostelId);
   }
 
+@Get(':id/room-types/:roomTypeId')
+@ApiOperation({ summary: 'Get room type details by ID' })
+@ApiParam({ name: 'id', description: 'Hostel ID' })
+@ApiParam({ name: 'roomTypeId', description: 'Room Type ID' })
+@ApiResponse({ 
+  status: HttpStatus.OK, 
+  description: 'Room type details retrieved successfully',
+  type: RoomType 
+})
+async getRoomTypeById(
+  @Param('id', ParseUUIDPipe) hostelId: string,
+  @Param('roomTypeId', ParseUUIDPipe) roomTypeId: string
+): Promise<RoomType> {
+  return this.roomsService.getRoomTypeById(hostelId, roomTypeId);
+}
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.hostelsService.findOne(id);

@@ -3,12 +3,17 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { CreateHostelDto } from './dto/create-hostel.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UpdateHostelDto } from './dto/update-hostel.dto';
+import { RoomType } from 'src/entities/room-type.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 @Injectable()
 export class HostelsService {
   constructor(
     private supabase: SupabaseService,
     private cloudinary: CloudinaryService,
+        @InjectRepository(RoomType)
+        private readonly roomTypeRepository: Repository<RoomType>,
   ) {}
 
   private toPoint(lng: number, lat: number): string {
@@ -312,6 +317,20 @@ async update(id: string, updateHostelDto: UpdateHostelDto, files?: import('multe
     
     throw new BadRequestException(`Failed to update hostel: ${error.message}`);
   }
+}
+
+async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
+  const roomType = await this.roomTypeRepository.findOne({
+    where: { id: roomTypeId, hostelId },
+    relations: ['hostel']
+  });
+
+  if (!roomType) {
+    throw new NotFoundException(
+      `Room type with ID ${roomTypeId} not found in hostel ${hostelId}`
+    );
+  }
+  return roomType;
 }
 
   async removeImage(id: string, imageUrl: string) {

@@ -182,6 +182,20 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   return this.roomTypeRepository.save(roomType);
 }
 
+async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
+  const roomType = await this.roomTypeRepository.findOne({
+    where: { id: roomTypeId, hostelId },
+    relations: ['hostel']
+  });
+
+  if (!roomType) {
+    throw new NotFoundException(
+      `Room type with ID ${roomTypeId} not found in hostel ${hostelId}`
+    );
+  }
+  return roomType;
+}
+
   // Get all rooms with filtering and pagination
   async getRooms(filterDto: RoomFilterDto = {}) {
     const {
