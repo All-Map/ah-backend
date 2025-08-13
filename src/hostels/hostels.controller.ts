@@ -47,7 +47,7 @@ export class HostelsController {
     return this.hostelsService.findAll();
   }
 
-    @Get(':id/room-types')
+  @Get(':id/room-types')
   @ApiOperation({ summary: 'Get room types for a hostel' })
   @ApiParam({ name: 'id', description: 'Hostel ID' })
   @ApiResponse({ 
@@ -58,7 +58,7 @@ export class HostelsController {
   async getRoomTypesByHostelId(
     @Param('id', ParseUUIDPipe) hostelId: string
   ): Promise<RoomType[]> {
-    return this.roomsService.getRoomTypesByHostelId(hostelId);
+    return this.hostelsService.getRoomTypesByHostelId(hostelId);
   }
 
 @Get(':id/room-types/:roomTypeId')

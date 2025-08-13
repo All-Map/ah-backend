@@ -28,8 +28,14 @@ export class Room {
   @Column('int', { nullable: true })
   floor: number;
 
-  @Column('enum', { enum: RoomStatus, default: RoomStatus.AVAILABLE })
-  status: RoomStatus;
+  // @Column('enum', { enum: RoomStatus, default: RoomStatus.AVAILABLE })
+  // status: RoomStatus;
+
+@Column({
+  type: 'text', // or 'varchar' if you really want
+})
+status: string;
+
 
   @Column('int', { default: 0, name: 'current_occupancy' })
   currentOccupancy: number;

@@ -6,12 +6,14 @@ import { UpdateHostelDto } from './dto/update-hostel.dto';
 import { RoomType } from 'src/entities/room-type.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { RoomsService } from 'src/rooms/rooms.service';
 
 @Injectable()
 export class HostelsService {
   constructor(
     private supabase: SupabaseService,
     private cloudinary: CloudinaryService,
+    private roomsService: RoomsService, 
         @InjectRepository(RoomType)
         private readonly roomTypeRepository: Repository<RoomType>,
   ) {}
@@ -330,8 +332,13 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
       `Room type with ID ${roomTypeId} not found in hostel ${hostelId}`
     );
   }
+
   return roomType;
 }
+
+  async getRoomTypesByHostelId(hostelId: string): Promise<any> {
+    return this.roomsService.getRoomTypesByHostelId(hostelId);
+  }
 
   async removeImage(id: string, imageUrl: string) {
     try {
