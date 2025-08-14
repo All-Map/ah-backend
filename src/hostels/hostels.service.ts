@@ -106,6 +106,19 @@ export class HostelsService {
         location: point,
         images: imageUrls,
         amenities: parsedAmenities,
+        base_price: dtoData.base_price,
+        payment_method: dtoData.payment_method,
+        bank_details: dtoData.bank_details || null,
+        momo_details: dtoData.momo_details || null,
+        max_occupancy: dtoData.max_occupancy || 0,
+        house_rules: dtoData.house_rules || '',
+        nearby_facilities: dtoData.nearby_facilities || [],
+        check_in_time: dtoData.check_in_time || null,
+        check_out_time: dtoData.check_out_time || null,
+        is_verified: false,
+        is_active: true,
+        rating: 0,
+        total_reviews: 0
       };
       
       console.log('Inserting data into Supabase:', insertData);
@@ -281,6 +294,15 @@ async update(id: string, updateHostelDto: UpdateHostelDto, files?: import('multe
     
     const updateData = {
       ...restOfDto,
+      base_price: updateHostelDto.base_price,
+      payment_method: updateHostelDto.payment_method,
+      bank_details: updateHostelDto.bank_details,
+      momo_details: updateHostelDto.momo_details,
+      max_occupancy: updateHostelDto.max_occupancy,
+      house_rules: updateHostelDto.house_rules,
+      nearby_facilities: updateHostelDto.nearby_facilities,
+      check_in_time: updateHostelDto.check_in_time,
+      check_out_time: updateHostelDto.check_out_time,
       ...locationUpdate,
       ...amenitiesUpdate,
       images: [...(existingHostel.images || []), ...imageUpdates],

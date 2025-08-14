@@ -2,6 +2,12 @@ import { Entity, Column, PrimaryGeneratedColumn, OneToMany, BeforeInsert, Before
 import { RoomType } from './room-type.entity';
 import { Room } from './room.entity';
 
+export enum PaymentMethod {
+  BANK = 'bank',
+  MOMO = 'momo',
+  BOTH = 'both'
+}
+
 @Entity('hostels')
 export class Hostel {
   @PrimaryGeneratedColumn('uuid')
@@ -45,7 +51,66 @@ export class Hostel {
     cafeteria: boolean;
     parking: boolean;
     security: boolean;
+    gym: boolean;
+    studyRoom: boolean;
+    kitchen: boolean;
+    ac: boolean;
+    generator: boolean;
   };
+
+  // New fields for pricing and payment
+  @Column('decimal', { precision: 10, scale: 2 })
+  base_price: number;
+
+  @Column({
+    type: 'enum',
+    enum: PaymentMethod,
+    default: PaymentMethod.BOTH
+  })
+  payment_method: PaymentMethod;
+
+  @Column('jsonb', { nullable: true })
+  bank_details: {
+    bank_name: string;
+    account_name: string;
+    account_number: string;
+    branch: string;
+  } | null;
+
+  @Column('jsonb', { nullable: true })
+  momo_details: {
+    provider: string; // MTN, Vodafone, AirtelTigo
+    number: string;
+    name: string;
+  } | null;
+
+  // Additional hostel information
+  @Column({ default: 0 })
+  max_occupancy: number;
+
+  @Column('text', { nullable: true })
+  house_rules: string;
+
+  @Column('jsonb', { default: [] })
+  nearby_facilities: string[]; // Schools, hospitals, markets, etc.
+
+  @Column('time', { nullable: true })
+  check_in_time: string;
+
+  @Column('time', { nullable: true })
+  check_out_time: string;
+
+  @Column({ default: false })
+  is_verified: boolean;
+
+  @Column({ default: true })
+  is_active: boolean;
+
+  @Column('decimal', { precision: 2, scale: 1, default: 0 })
+  rating: number;
+
+  @Column({ default: 0 })
+  total_reviews: number;
 
   @Column('timestamptz', { default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
@@ -83,12 +148,29 @@ export class Hostel {
   }
 
   getLowestPrice(): number {
-    if (!this.roomTypes?.length) return 0;
-    return Math.min(...this.roomTypes.map(type => type.pricePerSemester));
+    if (!this.roomTypes?.length) return this.base_price;
+    return Math.min(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
   }
 
   getHighestPrice(): number {
-    if (!this.roomTypes?.length) return 0;
-    return Math.max(...this.roomTypes.map(type => type.pricePerSemester));
+    if (!this.roomTypes?.length) return this.base_price;
+    return Math.max(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
+  }
+
+  // Payment method helpers
+  acceptsBankPayments(): boolean {
+    return this.payment_method === PaymentMethod.BANK || this.payment_method === PaymentMethod.BOTH;
+  }
+
+  acceptsMomoPayments(): boolean {
+    return this.payment_method === PaymentMethod.MOMO || this.payment_method === PaymentMethod.BOTH;
+  }
+
+  getBankDetails() {
+    return this.acceptsBankPayments() ? this.bank_details : null;
+  }
+
+  getMomoDetails() {
+    return this.acceptsMomoPayments() ? this.momo_details : null;
   }
 }
