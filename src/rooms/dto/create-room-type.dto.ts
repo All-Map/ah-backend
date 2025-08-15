@@ -1,6 +1,6 @@
 import { 
   IsString, IsNotEmpty, IsNumber, IsArray, IsOptional, IsPositive, 
-  IsEnum
+  IsEnum, ArrayMinSize, IsIn
 } from 'class-validator';
 
 export enum RoomGender {
@@ -42,6 +42,14 @@ export class CreateRoomTypeDto {
   @IsEnum(RoomGender)
   @IsOptional()
   gender: RoomGender = RoomGender.MIXED;
+
+  // New field for allowed genders array
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  @IsIn(['male', 'female', 'mixed', 'other'], { each: true })
+  @IsOptional()
+  allowedGenders?: string[] = ['mixed'];
 
   @IsArray()
   @IsOptional()

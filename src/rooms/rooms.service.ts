@@ -151,39 +151,61 @@ export class RoomsService {
     return await this.roomRepository.save(rooms);
   }
 
-  async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
-    // Validate input
-    if (!createRoomTypeDto) {
-      throw new BadRequestException('Request body is required');
-    }
+  // Update the create method in your rooms.service.ts
 
-    const { hostelId, name } = createRoomTypeDto;
-
-    // Check hostel exists
-    const hostel = await this.hostelRepository.findOneBy({ id: hostelId });
-    if (!hostel) {
-      throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
-    }
-
-    // Check for duplicate room type name in the same hostel
-    const existing = await this.roomTypeRepository.findOneBy({ hostelId, name });
-    if (existing) {
-      throw new ConflictException(`Room type "${name}" already exists in this hostel`);
-    }
-
-    // Create with default values including gender
-    const roomType = this.roomTypeRepository.create({
-      ...createRoomTypeDto,
-      gender: createRoomTypeDto.gender || RoomGender.MIXED,
-      amenities: createRoomTypeDto.amenities || [],
-      images: createRoomTypeDto.images || [],
-      totalRooms: createRoomTypeDto.capacity || 2,
-      availableRooms: createRoomTypeDto.capacity || 2
-    });
-
-    return this.roomTypeRepository.save(roomType);
+async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
+  // Validate input
+  if (!createRoomTypeDto) {
+    throw new BadRequestException('Request body is required');
   }
 
+  const { hostelId, name } = createRoomTypeDto;
+
+  // Check hostel exists
+  const hostel = await this.hostelRepository.findOneBy({ id: hostelId });
+  if (!hostel) {
+    throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
+  }
+
+  // Check for duplicate room type name in the same hostel
+  const existing = await this.roomTypeRepository.findOneBy({ hostelId, name });
+  if (existing) {
+    throw new ConflictException(`Room type "${name}" already exists in this hostel`);
+  }
+
+  // Handle allowedGenders properly
+  let allowedGenders: string[] = [];
+  
+  if (createRoomTypeDto.allowedGenders && Array.isArray(createRoomTypeDto.allowedGenders)) {
+    // Use the provided allowedGenders array
+    allowedGenders = createRoomTypeDto.allowedGenders;
+  } else if (createRoomTypeDto.gender) {
+    // Fall back to single gender field if allowedGenders is not provided
+    allowedGenders = [createRoomTypeDto.gender];
+  } else {
+    // Default to mixed if neither is provided
+    allowedGenders = [RoomGender.MIXED];
+  }
+
+  // Create with default values including properly formatted allowedGenders
+  const roomType = this.roomTypeRepository.create({
+    ...createRoomTypeDto,
+    gender: createRoomTypeDto.gender || RoomGender.MIXED, // Keep for backward compatibility
+    allowedGenders: allowedGenders, // This should now be a proper array
+    amenities: createRoomTypeDto.amenities || [],
+    images: createRoomTypeDto.images || [],
+    totalRooms: createRoomTypeDto.total_rooms || createRoomTypeDto.capacity || 2,
+    availableRooms: createRoomTypeDto.available_rooms || createRoomTypeDto.capacity || 2
+  });
+
+  try {
+    return await this.roomTypeRepository.save(roomType);
+  } catch (error) {
+    console.error('Error saving room type:', error);
+    console.error('Room type data:', roomType);
+    throw new BadRequestException('Failed to create room type: ' + error.message);
+  }
+}
   async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
     const roomType = await this.roomTypeRepository.findOne({
       where: { id: roomTypeId, hostelId },

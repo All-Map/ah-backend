@@ -56,12 +56,14 @@ export class RoomType {
   images: string[];
 
   // Fixed: Added the missing allowedGenders property
-  @Column('simple-array', { 
-    nullable: true, 
-    name: 'gender',
-    comment: 'Gender restrictions for this room type. Options: male, female, mixed, other' 
-  })
-  allowedGenders: string[];
+@Column('text', { 
+  array: true,
+  nullable: true, 
+  name: 'allowed_genders',
+  comment: 'Gender restrictions for this room type. Options: male, female, mixed, other',
+  default: () => "ARRAY['mixed']"
+})
+allowedGenders: string[];
 
   @Column('timestamptz', { default: () => 'CURRENT_TIMESTAMP', name: 'created_at' })
   createdAt: Date;
