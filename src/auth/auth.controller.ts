@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Res, Request } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Res, Request, Put, Patch } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -9,6 +9,7 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import { User } from 'src/entities/user.entity';
 import { RolesGuard } from './guards/roles.guard';
 import { ProfileService } from 'src/profile/profile.service';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -27,7 +28,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get('user-profile')
   async getUserProfile(@CurrentUser() user: User) {
-    return this.profileService.getUserProfile(user.id);
+    return this.authService.getUserProfile(user.id);
   }
 
 @Post('login')
@@ -41,6 +42,15 @@ async login(@Body() loginDto: LoginDto) {
 
   return this.authService.login(user, loginDto.password);
 }
+
+ @UseGuards(JwtAuthGuard)
+  @Patch('update-profile')
+  async updateProfile(
+    @CurrentUser() user: any,
+    @Body() updateProfileDto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(user.sub, updateProfileDto);
+  }
 
   @Post('request-reset')
   async requestReset(@Body('email') email: string) {

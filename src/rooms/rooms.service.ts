@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindManyOptions, Like, In } from 'typeorm';
 import { Room, RoomStatus } from '../entities/room.entity';
 import { Hostel } from '../entities/hostel.entity';
-import { RoomType } from '../entities/room-type.entity';
+import { RoomType, RoomGender } from '../entities/room-type.entity';
 import { CreateRoomTypeDto } from './dto/create-room-type.dto';
 
 // DTOs
@@ -35,6 +35,7 @@ export class RoomFilterDto {
   limit?: number;
   sortBy?: 'roomNumber' | 'floor' | 'status' | 'currentOccupancy' | 'createdAt';
   sortOrder?: 'ASC' | 'DESC';
+  gender?: RoomGender; // New filter for gender
 }
 
 export class BulkCreateRoomDto {
@@ -101,11 +102,11 @@ export class RoomsService {
   }
 
   async getRoomTypesByHostelId(hostelId: string): Promise<RoomType[]> {
-  return this.roomTypeRepository.find({
-    where: { hostelId },
-    order: { name: 'ASC' }
-  });
-}
+    return this.roomTypeRepository.find({
+      where: { hostelId },
+      order: { name: 'ASC' }
+    });
+  }
 
   // Bulk create rooms
   async bulkCreateRooms(bulkCreateDto: BulkCreateRoomDto): Promise<Room[]> {
@@ -150,53 +151,54 @@ export class RoomsService {
     return await this.roomRepository.save(rooms);
   }
 
-async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
-  // Validate input
-  if (!createRoomTypeDto) {
-    throw new BadRequestException('Request body is required');
+  async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
+    // Validate input
+    if (!createRoomTypeDto) {
+      throw new BadRequestException('Request body is required');
+    }
+
+    const { hostelId, name } = createRoomTypeDto;
+
+    // Check hostel exists
+    const hostel = await this.hostelRepository.findOneBy({ id: hostelId });
+    if (!hostel) {
+      throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
+    }
+
+    // Check for duplicate room type name in the same hostel
+    const existing = await this.roomTypeRepository.findOneBy({ hostelId, name });
+    if (existing) {
+      throw new ConflictException(`Room type "${name}" already exists in this hostel`);
+    }
+
+    // Create with default values including gender
+    const roomType = this.roomTypeRepository.create({
+      ...createRoomTypeDto,
+      gender: createRoomTypeDto.gender || RoomGender.MIXED,
+      amenities: createRoomTypeDto.amenities || [],
+      images: createRoomTypeDto.images || [],
+      totalRooms: createRoomTypeDto.capacity || 2,
+      availableRooms: createRoomTypeDto.capacity || 2
+    });
+
+    return this.roomTypeRepository.save(roomType);
   }
 
-  const { hostelId, name } = createRoomTypeDto;
+  async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
+    const roomType = await this.roomTypeRepository.findOne({
+      where: { id: roomTypeId, hostelId },
+      relations: ['hostel']
+    });
 
-  // Check hostel exists
-  const hostel = await this.hostelRepository.findOneBy({ id: hostelId });
-  if (!hostel) {
-    throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
+    if (!roomType) {
+      throw new NotFoundException(
+        `Room type with ID ${roomTypeId} not found in hostel ${hostelId}`
+      );
+    }
+    return roomType;
   }
 
-  // Check for duplicate
-  const existing = await this.roomTypeRepository.findOneBy({ hostelId, name });
-  if (existing) {
-    throw new ConflictException(`Room type "${name}" already exists in this hostel`);
-  }
-
-  // Create with default values
-  const roomType = this.roomTypeRepository.create({
-    ...createRoomTypeDto,
-    amenities: createRoomTypeDto.amenities || [],
-    images: createRoomTypeDto.images || [],
-    totalRooms: createRoomTypeDto.capacity || 2,
-    availableRooms: createRoomTypeDto.capacity || 2
-  });
-
-  return this.roomTypeRepository.save(roomType);
-}
-
-async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
-  const roomType = await this.roomTypeRepository.findOne({
-    where: { id: roomTypeId, hostelId },
-    relations: ['hostel']
-  });
-
-  if (!roomType) {
-    throw new NotFoundException(
-      `Room type with ID ${roomTypeId} not found in hostel ${hostelId}`
-    );
-  }
-  return roomType;
-}
-
-  // Get all rooms with filtering and pagination
+  // Get all rooms with filtering and pagination (updated with gender filter)
   async getRooms(filterDto: RoomFilterDto = {}) {
     const {
       hostelId,
@@ -205,6 +207,7 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
       floor,
       available,
       search,
+      gender,
       page = 1,
       limit = 10,
       sortBy = 'roomNumber',
@@ -231,6 +234,10 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
 
     if (floor !== undefined) {
       queryBuilder.andWhere('room.floor = :floor', { floor });
+    }
+
+    if (gender) {
+      queryBuilder.andWhere('roomType.gender = :gender', { gender });
     }
 
     if (available !== undefined) {
@@ -284,18 +291,28 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
 
   // Get rooms by hostel ID
   async getRoomsByHostelId(hostelId: string, filterDto: Partial<RoomFilterDto> = {}): Promise<Room[]> {
-    const { status, floor, available } = filterDto;
+    const { status, floor, available, gender } = filterDto;
 
-    const where: any = { hostelId };
+    const queryBuilder = this.roomRepository
+      .createQueryBuilder('room')
+      .leftJoinAndSelect('room.roomType', 'roomType')
+      .where('room.hostelId = :hostelId', { hostelId });
 
-    if (status) where.status = status;
-    if (floor !== undefined) where.floor = floor;
+    if (status) {
+      queryBuilder.andWhere('room.status = :status', { status });
+    }
 
-    let rooms = await this.roomRepository.find({
-      where,
-      relations: ['roomType'],
-      order: { roomNumber: 'ASC' }
-    });
+    if (floor !== undefined) {
+      queryBuilder.andWhere('room.floor = :floor', { floor });
+    }
+
+    if (gender) {
+      queryBuilder.andWhere('roomType.gender = :gender', { gender });
+    }
+
+    let rooms = await queryBuilder
+      .orderBy('room.roomNumber', 'ASC')
+      .getMany();
 
     // Filter by availability if specified
     if (available !== undefined) {
@@ -303,6 +320,80 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
     }
 
     return rooms;
+  }
+
+  // Get available rooms by gender compatibility (NEW METHOD)
+  async getAvailableRoomsByGender(
+    hostelId: string, 
+    userGender: string, 
+    roomTypeId?: string
+  ): Promise<Room[]> {
+    const queryBuilder = this.roomRepository
+      .createQueryBuilder('room')
+      .leftJoinAndSelect('room.roomType', 'roomType')
+      .where('room.hostelId = :hostelId', { hostelId })
+      .andWhere('room.status = :status', { status: RoomStatus.AVAILABLE })
+      .andWhere('room.currentOccupancy < room.maxOccupancy');
+
+    // Filter by gender compatibility
+    if (userGender && userGender.toLowerCase() !== 'mixed') {
+      queryBuilder.andWhere(
+        '(roomType.gender = :userGender OR roomType.gender = :mixed)',
+        { 
+          userGender: userGender.toLowerCase(), 
+          mixed: RoomGender.MIXED 
+        }
+      );
+    }
+
+    if (roomTypeId) {
+      queryBuilder.andWhere('room.roomTypeId = :roomTypeId', { roomTypeId });
+    }
+
+    return queryBuilder
+      .orderBy('room.roomNumber', 'ASC')
+      .getMany();
+  }
+
+  // Validate gender compatibility for booking (NEW METHOD)
+  async validateGenderCompatibility(
+    roomId: string, 
+    userGender: string
+  ): Promise<{ compatible: boolean; reason?: string }> {
+    const room = await this.roomRepository.findOne({
+      where: { id: roomId },
+      relations: ['roomType']
+    });
+
+    if (!room) {
+      return { compatible: false, reason: 'Room not found' };
+    }
+
+    if (!room.roomType) {
+      return { compatible: false, reason: 'Room type not found' };
+    }
+
+    // Check if room type allows this gender
+    const isCompatible = room.roomType.isGenderCompatible(userGender);
+    
+    if (!isCompatible) {
+      return {
+        compatible: false,
+        reason: `This room is designated for ${room.roomType.getGenderDisplayName()} only`
+      };
+    }
+
+    // Check if room has space
+    if (!room.hasSpace()) {
+      return { compatible: false, reason: 'Room is at full capacity' };
+    }
+
+    // Check if room is available
+    if (room.status !== RoomStatus.AVAILABLE) {
+      return { compatible: false, reason: 'Room is not available' };
+    }
+
+    return { compatible: true };
   }
 
   // Update room
@@ -400,26 +491,35 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
     await this.roomRepository.remove(rooms);
   }
 
-  // Get available rooms by hostel and room type
-  async getAvailableRooms(hostelId: string, roomTypeId?: string): Promise<Room[]> {
-    const where: any = {
-      hostelId,
-      status: RoomStatus.AVAILABLE
-    };
+  // Get available rooms by hostel and room type (updated with gender support)
+  async getAvailableRooms(hostelId: string, roomTypeId?: string, userGender?: string): Promise<Room[]> {
+    const queryBuilder = this.roomRepository
+      .createQueryBuilder('room')
+      .leftJoinAndSelect('room.roomType', 'roomType')
+      .where('room.hostelId = :hostelId', { hostelId })
+      .andWhere('room.status = :status', { status: RoomStatus.AVAILABLE });
 
     if (roomTypeId) {
-      where.roomTypeId = roomTypeId;
+      queryBuilder.andWhere('room.roomTypeId = :roomTypeId', { roomTypeId });
     }
 
-    const rooms = await this.roomRepository.find({
-      where,
-      relations: ['roomType']
-    });
+    // Filter by gender if provided
+    if (userGender && userGender.toLowerCase() !== 'mixed') {
+      queryBuilder.andWhere(
+        '(roomType.gender = :userGender OR roomType.gender = :mixed)',
+        { 
+          userGender: userGender.toLowerCase(), 
+          mixed: RoomGender.MIXED 
+        }
+      );
+    }
+
+    const rooms = await queryBuilder.getMany();
 
     return rooms.filter(room => room.hasSpace());
   }
 
-  // Get room statistics for a hostel
+  // Get room statistics for a hostel (updated with gender stats)
   async getRoomStatistics(hostelId: string) {
     const rooms = await this.roomRepository.find({
       where: { hostelId },
@@ -436,7 +536,12 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
       currentOccupancy: 0,
       occupancyRate: 0,
       byRoomType: {} as Record<string, any>,
-      byFloor: {} as Record<number, any>
+      byFloor: {} as Record<number, any>,
+      byGender: {
+        [RoomGender.MALE]: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 },
+        [RoomGender.FEMALE]: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 },
+        [RoomGender.MIXED]: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 }
+      }
     };
 
     rooms.forEach(room => {
@@ -455,13 +560,21 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
           available: 0,
           occupied: 0,
           capacity: 0,
-          currentOccupancy: 0
+          currentOccupancy: 0,
+          gender: room.roomType?.gender || RoomGender.MIXED
         };
       }
       stats.byRoomType[typeName].count++;
       stats.byRoomType[typeName][room.status]++;
       stats.byRoomType[typeName].capacity += room.maxOccupancy;
       stats.byRoomType[typeName].currentOccupancy += room.currentOccupancy;
+
+      // By gender
+      const gender = room.roomType?.gender || RoomGender.MIXED;
+      stats.byGender[gender].count++;
+      stats.byGender[gender][room.status]++;
+      stats.byGender[gender].capacity += room.maxOccupancy;
+      stats.byGender[gender].currentOccupancy += room.currentOccupancy;
 
       // By floor
       if (room.floor !== null) {
@@ -489,7 +602,7 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
     return stats;
   }
 
-  // Search rooms with advanced filters
+  // Search rooms with advanced filters (updated with gender support)
   async searchRooms(searchTerm: string, filters: RoomFilterDto = {}) {
     const queryBuilder = this.roomRepository
       .createQueryBuilder('room')
@@ -505,6 +618,10 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
 
     if (filters.status) {
       queryBuilder.andWhere('room.status = :status', { status: filters.status });
+    }
+
+    if (filters.gender) {
+      queryBuilder.andWhere('roomType.gender = :gender', { gender: filters.gender });
     }
 
     if (filters.available) {

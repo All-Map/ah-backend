@@ -19,6 +19,7 @@ import {
   ExtendBookingDto,
   BookingReportFilterDto
 } from './dto/booking.dto';
+import { Gender, User } from 'src/entities/user.entity';
 
 @Injectable()
 export class BookingsService {
@@ -33,12 +34,23 @@ export class BookingsService {
     private readonly hostelRepository: Repository<Hostel>,
     @InjectRepository(RoomType)
     private readonly roomTypeRepository: Repository<RoomType>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     private readonly dataSource: DataSource, 
   ) {}
 
   // Create a new booking
-  async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
-    const { hostelId, roomId, checkInDate, checkOutDate, bookingType, ...bookingData } = createBookingDto;
+async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
+    const { hostelId, roomId, studentId, checkInDate, checkOutDate, bookingType, ...bookingData } = createBookingDto;
+
+    // Get user information
+    const user = await this.userRepository.findOne({ where: { id: studentId } });
+    if (!user) {
+      throw new NotFoundException(`User with ID ${studentId} not found`);
+    }
+
+    // Check if user already has an active booking
+    await this.validateSingleBookingConstraint(studentId);
 
     // Verify hostel exists
     const hostel = await this.hostelRepository.findOne({ where: { id: hostelId } });
@@ -54,6 +66,9 @@ export class BookingsService {
     if (!room) {
       throw new NotFoundException(`Room with ID ${roomId} not found in this hostel`);
     }
+
+    // Validate gender compatibility
+    await this.validateGenderCompatibility(user, room);
 
     // Check if room is available
     if (!room.isAvailable()) {
@@ -98,6 +113,7 @@ export class BookingsService {
     const booking = this.bookingRepository.create({
       hostelId,
       roomId,
+      studentId,
       checkInDate: checkIn,
       checkOutDate: checkOut,
       bookingType,
@@ -119,7 +135,124 @@ export class BookingsService {
     return savedBooking;
   }
 
-  // Calculate booking amount based on room type and booking duration
+  /**
+   * Validates that a user can only have one active booking at a time
+   * @param studentId - The student's ID
+   * @throws ConflictException if user already has an active booking
+   */
+  private async validateSingleBookingConstraint(studentId: string): Promise<void> {
+    const activeBookingStatuses = [
+      BookingStatus.PENDING,
+      BookingStatus.CONFIRMED,
+      BookingStatus.CHECKED_IN
+    ];
+
+    const existingBooking = await this.bookingRepository.findOne({
+      where: {
+        studentId,
+        status: In(activeBookingStatuses)
+      },
+      relations: ['hostel', 'room']
+    });
+
+    if (existingBooking) {
+      const statusText = existingBooking.status.replace('_', ' ').toUpperCase();
+      throw new ConflictException(
+        `You already have an active booking (${statusText}) at ${existingBooking.hostel?.name || 'Unknown Hostel'}, Room ${existingBooking.room?.roomNumber || 'N/A'}. Please complete or cancel your current booking before creating a new one.`
+      );
+    }
+  }
+
+  /**
+   * Validates that the user's gender is compatible with the room type
+   * @param user - The user attempting to book
+   * @param room - The room being booked
+   * @throws BadRequestException if gender is not compatible
+   */
+  private async validateGenderCompatibility(user: User, room: Room): Promise<void> {
+    // If user hasn't specified gender, allow booking but warn
+    if (!user.gender || user.gender === Gender.PREFER_NOT_TO_SAY) {
+      // You might want to log this or handle it differently
+      return;
+    }
+
+    // Get room type with gender restrictions
+    const roomType = await this.roomTypeRepository.findOne({
+      where: { id: room.roomType.id }
+    });
+
+    if (!roomType) {
+      throw new NotFoundException('Room type not found');
+    }
+
+    // Check if room type has gender restrictions
+    if (roomType.allowedGenders && roomType.allowedGenders.length > 0) {
+      const userGender = user.gender.toLowerCase();
+      const allowedGenders = roomType.allowedGenders.map(g => g.toLowerCase());
+
+      if (!allowedGenders.includes(userGender) && !allowedGenders.includes('mixed')) {
+        const allowedGendersText = allowedGenders.join(', ');
+        throw new BadRequestException(
+          `This room is restricted to ${allowedGendersText} students only. Your profile gender (${user.gender}) is not compatible with this room type.`
+        );
+      }
+    }
+
+    // Additional check: if room has existing occupants, verify gender compatibility
+    await this.validateRoomGenderMix(user, room);
+  }
+
+  /**
+   * Validates that adding this user won't create gender conflicts in the room
+   * @param user - The user attempting to book
+   * @param room - The room being booked
+   * @throws BadRequestException if gender mix would be incompatible
+   */
+  private async validateRoomGenderMix(user: User, room: Room): Promise<void> {
+    // Get current active bookings for this room
+    const currentBookings = await this.bookingRepository.find({
+      where: {
+        roomId: room.id,
+        status: In([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN])
+      },
+      relations: ['room', 'room.roomType']
+    });
+
+    if (currentBookings.length === 0) {
+      return; // No current occupants, no conflict
+    }
+
+    // Get genders of current occupants
+    const currentOccupantIds = currentBookings.map(booking => booking.studentId);
+    const currentOccupants = await this.userRepository.find({
+      where: { id: In(currentOccupantIds) }
+    });
+
+    const currentGenders = currentOccupants
+      .map(occupant => occupant.gender?.toLowerCase())
+      .filter(gender => gender && gender !== Gender.PREFER_NOT_TO_SAY.toLowerCase());
+
+    // If no specific genders or room allows mixed, allow booking
+    const roomType = room.roomType;
+    if (!roomType.allowedGenders || 
+        roomType.allowedGenders.includes('mixed') || 
+        currentGenders.length === 0) {
+      return;
+    }
+
+    // Check if new user's gender matches existing occupants
+    const userGender = user.gender?.toLowerCase();
+    if (userGender && userGender !== Gender.PREFER_NOT_TO_SAY.toLowerCase()) {
+      const existingGender = currentGenders[0]; // Assume all current occupants have same gender
+      if (existingGender && userGender !== existingGender) {
+        throw new BadRequestException(
+          `This room currently has ${existingGender} occupants. Mixed gender occupancy is not allowed in this room type.`
+        );
+      }
+    }
+  }
+
+// Calculate booking amount based on room type and booking duration
   private async calculateBookingAmount(roomType: RoomType, bookingType: BookingType, checkIn: Date, checkOut: Date): Promise<number> {
     const duration = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
     
@@ -314,7 +447,6 @@ export class BookingsService {
     return await this.bookingRepository.save(booking);
   }
 
-  // Cancel booking
   async cancelBooking(id: string, cancelDto: CancelBookingDto): Promise<Booking> {
     const booking = await this.getBookingById(id);
 

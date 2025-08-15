@@ -3,6 +3,12 @@ import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, OneToMany, JoinColum
 import { Hostel } from './hostel.entity';
 import { Room } from './room.entity';
 
+export enum RoomGender {
+  MALE = 'male',
+  FEMALE = 'female',
+  MIXED = 'mixed' // For common areas or special cases
+}
+
 @Entity('room_types')
 export class RoomType {
   @PrimaryGeneratedColumn('uuid')
@@ -29,6 +35,14 @@ export class RoomType {
   @Column('int', { default: 1 })
   capacity: number;
 
+  @Column({
+    type: 'enum',
+    enum: RoomGender,
+    default: RoomGender.MIXED,
+    name: 'gender'
+  })
+  gender: RoomGender;
+
   @Column('jsonb', { default: [] })
   amenities: string[];
 
@@ -40,6 +54,14 @@ export class RoomType {
 
   @Column('jsonb', { default: [] })
   images: string[];
+
+  // Fixed: Added the missing allowedGenders property
+  @Column('simple-array', { 
+    nullable: true, 
+    name: 'gender',
+    comment: 'Gender restrictions for this room type. Options: male, female, mixed, other' 
+  })
+  allowedGenders: string[];
 
   @Column('timestamptz', { default: () => 'CURRENT_TIMESTAMP', name: 'created_at' })
   createdAt: Date;
@@ -69,5 +91,24 @@ export class RoomType {
   getAvailabilityPercentage(): number {
     if (this.totalRooms === 0) return 0;
     return Math.round((this.availableRooms / this.totalRooms) * 100);
+  }
+
+  // Gender-related helper methods
+  isGenderCompatible(userGender: string): boolean {
+    if (this.gender === RoomGender.MIXED) return true;
+    return this.gender === userGender.toLowerCase();
+  }
+
+  getGenderDisplayName(): string {
+    switch (this.gender) {
+      case RoomGender.MALE:
+        return 'Male Only';
+      case RoomGender.FEMALE:
+        return 'Female Only';
+      case RoomGender.MIXED:
+        return 'Mixed Gender';
+      default:
+        return 'Unknown';
+    }
   }
 }

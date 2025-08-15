@@ -16,6 +16,13 @@ export class User {
   @Column({ nullable: true })
   phone: string;
 
+  @Column({ 
+    type: 'enum',
+    enum: ['male', 'female', 'other', 'prefer_not_to_say'],
+    nullable: true 
+  })
+  gender: string;
+
   @Column()
   password_hash: string;
 
@@ -70,4 +77,11 @@ export enum UserRole {
   STUDENT = 'student',
   HOSTEL_ADMIN = 'hostel_admin',
   SUPER_ADMIN = 'super_admin',
+}
+
+export enum Gender {
+  MALE = 'male',
+  FEMALE = 'female',
+  OTHER = 'other',
+  PREFER_NOT_TO_SAY = 'prefer_not_to_say',
 }

@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { RegisterDto } from './dto/register.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { User } from 'src/entities/user.entity';
 import * as bcrypt from 'bcrypt';
@@ -13,6 +14,7 @@ export interface UserDetails {
   name: string;
   email: string;
   phone: string;
+  gender?: string;
   is_verified: boolean;
   role: string;
   school_id: string;
@@ -23,7 +25,6 @@ export interface UserDetails {
     location: string;
   };
 }
-
 
 @Injectable()
 export class AuthService {
@@ -72,8 +73,6 @@ async register(registerDto: RegisterDto): Promise<User> {
   if (existingUser?.is_verified) {
     throw new ConflictException('User already exists');
   }
-
-  
 
   const verificationToken = crypto.randomBytes(32).toString('hex');
   const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -159,8 +158,6 @@ async registerStudent(registerDto: RegisterDto): Promise<User> {
     throw new ConflictException('User already exists');
   }
 
-  
-
   const verificationToken = crypto.randomBytes(32).toString('hex');
   const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
@@ -171,6 +168,7 @@ const userData = {
   password_hash: hashedPassword,
   school_id: school.id,
   name: registerDto.name || null,
+  gender: registerDto.gender || null,
   verification_token: verificationToken,
   verification_token_expires_at: tokenExpiry.toISOString(),
   is_verified: false
@@ -273,7 +271,6 @@ async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User
     throw new InternalServerErrorException('Failed to verify email');
   }
 
-
   return {
     message: 'Email verified successfully',
     user: updatedUser
@@ -348,11 +345,11 @@ async login(user: User, inputPassword: string) {
       is_verified: user.is_verified,
       name: user.name,
       phone: user.phone,
+      gender: user.gender,
       school_id: user.school_id,
     },
   };
 }
-
 
   async requestPasswordReset(email: string) {
     const user = await this.findUserByEmail(email);
@@ -417,33 +414,118 @@ async resetPassword(dto: ResetPasswordDto) {
     return error ? null : data;
   }
 
-    async getUserProfile(userId: string): Promise<UserDetails> {
-      // Step 1: Get user data
-      const { data: user, error: userError } = await this.supabase.client
+// In your AuthService.getUserProfile method, add logging to debug:
+
+async getUserProfile(userId: string): Promise<UserDetails> {
+  // Step 1: Get user data
+  const { data: user, error: userError } = await this.supabase.client
+    .from('users')
+    .select('id, name, email, phone, gender, is_verified, role, school_id')
+    .eq('id', userId)
+    .single();
+
+  console.log('Database user data:', user); // Add this debug line
+  console.log('User gender from DB:', user?.gender); // Add this debug line
+
+  if (userError || !user) {
+    console.error('User fetch error:', userError);
+    throw new NotFoundException('User profile not found');
+  }
+
+  // Step 2: Get school data if user has a school_id
+  let school: {
+    id: string;
+    name: string;
+    domain: string;
+    location: string;
+  } | undefined = undefined;
+  
+  if (user.school_id) {
+    const { data: schoolData, error: schoolError } = await this.supabase.client
+      .from('schools')
+      .select('id, name, domain, location')
+      .eq('id', user.school_id)
+      .single();
+
+    if (!schoolError && schoolData) {
+      school = {
+        id: schoolData.id,
+        name: schoolData.name,
+        domain: schoolData.domain,
+        location: schoolData.location,
+      };
+    }
+  }
+
+  // Step 3: Return combined profile
+  const profile: UserDetails = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    gender: user.gender, // Make sure this is included
+    is_verified: user.is_verified,
+    role: user.role,
+    school_id: user.school_id,
+    school,
+  };
+
+  console.log('Final profile object:', profile); // Add this debug line
+  console.log('Final profile gender:', profile.gender); // Add this debug line
+
+  return profile;
+}
+    async updateProfile(userId: string, updateProfileDto: UpdateProfileDto): Promise<UserDetails> {
+      // Get current user data first
+      const { data: currentUser, error: fetchError } = await this.supabase.client
         .from('users')
-        .select('id, name, email, phone, is_verified, role, school_id')
+        .select('*')
         .eq('id', userId)
         .single();
-  
-      if (userError || !user) {
-        console.error('User fetch error:', userError);
-        throw new NotFoundException('User profile not found');
+
+      if (fetchError || !currentUser) {
+        throw new NotFoundException('User not found');
       }
-  
-      // Step 2: Get school data if user has a school_id
+
+      // Prepare update data (only include fields that are provided)
+      const updateData: any = {};
+      if (updateProfileDto.name !== undefined) updateData.name = updateProfileDto.name;
+      if (updateProfileDto.phone !== undefined) updateData.phone = updateProfileDto.phone;
+      if (updateProfileDto.gender !== undefined) updateData.gender = updateProfileDto.gender;
+
+      // Only update if there's something to update
+      if (Object.keys(updateData).length === 0) {
+        throw new BadRequestException('No valid fields to update');
+      }
+
+      // Update user profile
+      const { data: updatedUser, error: updateError } = await this.supabase.client
+        .from('users')
+        .update(updateData)
+        .eq('id', userId)
+        .select('id, name, email, phone, gender, is_verified, role, school_id')
+        .single();
+
+      if (updateError) {
+        console.error('Profile update error:', updateError);
+        throw new InternalServerErrorException('Failed to update profile');
+      }
+
+      // Get school data if user has a school_id
       let school: {
         id: string;
         name: string;
         domain: string;
         location: string;
       } | undefined = undefined;
-      if (user.school_id) {
+
+      if (updatedUser.school_id) {
         const { data: schoolData, error: schoolError } = await this.supabase.client
           .from('schools')
           .select('id, name, domain, location')
-          .eq('id', user.school_id)
+          .eq('id', updatedUser.school_id)
           .single();
-  
+
         if (!schoolError && schoolData) {
           school = {
             id: schoolData.id,
@@ -453,19 +535,20 @@ async resetPassword(dto: ResetPasswordDto) {
           };
         }
       }
-  
-      // Step 3: Return combined profile
+
+      // Return updated profile
       const profile: UserDetails = {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        is_verified: user.is_verified,
-        role: user.role,
-        school_id: user.school_id,
+        id: updatedUser.id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone: updatedUser.phone,
+        gender: updatedUser.gender,
+        is_verified: updatedUser.is_verified,
+        role: updatedUser.role,
+        school_id: updatedUser.school_id,
         school,
       };
-  
+
       return profile;
     }
 }

@@ -8,6 +8,11 @@ import { Payment } from '../entities/payment.entity';
 import { Room } from '../entities/room.entity';
 import { Hostel } from '../entities/hostel.entity';
 import { RoomType } from '../entities/room-type.entity';
+import { AuthService } from 'src/auth/auth.service';
+import { User } from 'src/entities/user.entity';
+import { SupabaseService } from 'src/supabase/supabase.service';
+import { JwtService } from '@nestjs/jwt';
+import { MailService } from 'src/mail/mail.service';
 
 @Module({
   imports: [
@@ -16,11 +21,12 @@ import { RoomType } from '../entities/room-type.entity';
       Payment,
       Room,
       Hostel,
-      RoomType
+      RoomType,
+      User
     ])
   ],
   controllers: [BookingsController],
-  providers: [BookingsService],
+  providers: [BookingsService, AuthService, SupabaseService, JwtService, MailService],
   exports: [BookingsService]
 })
 export class BookingsModule {}
