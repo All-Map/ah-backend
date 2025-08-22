@@ -117,6 +117,7 @@ export class HostelsService {
         check_out_time: dtoData.check_out_time || null,
         is_verified: false,
         is_active: true,
+        accepting_bookings: true, // Default to accepting bookings
         rating: 0,
         total_reviews: 0
       };
@@ -190,6 +191,47 @@ export class HostelsService {
     } catch (error) {
       console.error('Error in findOne method:', error);
       throw error;
+    }
+  }
+
+  // New method to toggle booking status
+  async toggleBookingStatus(id: string, acceptingBookings: boolean) {
+    try {
+      console.log(`Toggling booking status for hostel ${id} to ${acceptingBookings}`);
+      
+      const { data, error } = await this.supabase.client
+        .from('hostels')
+        .update({ 
+          accepting_bookings: acceptingBookings,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select('id, name, accepting_bookings')
+        .single();
+
+      if (error) {
+        console.error('Supabase toggleBookingStatus error:', error);
+        throw new BadRequestException(`Database error: ${error.message}`);
+      }
+
+      if (!data) {
+        throw new NotFoundException('Hostel not found');
+      }
+      
+      console.log('Successfully toggled booking status:', data);
+      return {
+        message: `Hostel ${data.name} is now ${acceptingBookings ? 'accepting' : 'not accepting'} bookings`,
+        hostel: data
+      };
+      
+    } catch (error) {
+      console.error('Error in toggleBookingStatus method:', error);
+      
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      
+      throw new BadRequestException(`Failed to toggle booking status: ${error.message}`);
     }
   }
 

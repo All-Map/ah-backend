@@ -106,6 +106,10 @@ export class Hostel {
   @Column({ default: true })
   is_active: boolean;
 
+  // NEW: Booking availability field
+  @Column({ default: true })
+  accepting_bookings: boolean;
+
   @Column('decimal', { precision: 2, scale: 1, default: 0 })
   rating: number;
 
@@ -147,15 +151,15 @@ export class Hostel {
     return this.roomTypes?.reduce((total, type) => total + type.availableRooms, 0) || 0;
   }
 
-getLowestPrice(): number {
-  if (!this.roomTypes?.length) return this.base_price;
-  return Math.min(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
-}
+  getLowestPrice(): number {
+    if (!this.roomTypes?.length) return this.base_price;
+    return Math.min(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
+  }
 
-getHighestPrice(): number {
-  if (!this.roomTypes?.length) return this.base_price;
-  return Math.max(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
-}
+  getHighestPrice(): number {
+    if (!this.roomTypes?.length) return this.base_price;
+    return Math.max(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
+  }
 
   // Payment method helpers
   acceptsBankPayments(): boolean {
@@ -172,5 +176,36 @@ getHighestPrice(): number {
 
   getMomoDetails() {
     return this.acceptsMomoPayments() ? this.momo_details : null;
+  }
+
+  // NEW: Booking availability helper methods
+  isAcceptingBookings(): boolean {
+    return this.accepting_bookings && this.is_active;
+  }
+
+  canAcceptBookings(): boolean {
+    return this.is_active && this.is_verified;
+  }
+
+  getBookingStatus(): 'accepting' | 'closed' | 'inactive' | 'unverified' {
+    if (!this.is_active) return 'inactive';
+    if (!this.is_verified) return 'unverified';
+    return this.accepting_bookings ? 'accepting' : 'closed';
+  }
+
+  getBookingStatusMessage(): string {
+    const status = this.getBookingStatus();
+    switch (status) {
+      case 'accepting':
+        return 'Currently accepting bookings';
+      case 'closed':
+        return 'Not accepting bookings at this time';
+      case 'inactive':
+        return 'Hostel is currently inactive';
+      case 'unverified':
+        return 'Hostel pending verification';
+      default:
+        return 'Booking status unknown';
+    }
   }
 }

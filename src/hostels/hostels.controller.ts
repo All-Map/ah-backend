@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, UploadedFiles, UseInterceptors, Request, HttpStatus, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, UploadedFiles, UseInterceptors, Request, HttpStatus, ParseUUIDPipe, Patch } from '@nestjs/common';
 import { HostelsService } from './hostels.service';
 import { CreateHostelDto } from './dto/create-hostel.dto';
 import { UserRole } from '../entities/user.entity';
@@ -45,6 +45,21 @@ export class HostelsController {
   @Get("fetch")
   findAll() {
     return this.hostelsService.findAll();
+  }
+
+    @Patch(':id/booking-status')
+  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Toggle hostel booking availability' })
+  @ApiParam({ name: 'id', description: 'Hostel ID' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Booking status updated successfully' 
+  })
+  async toggleBookingStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('acceptingBookings') acceptingBookings: boolean
+  ) {
+    return this.hostelsService.toggleBookingStatus(id, acceptingBookings);
   }
 
   @Get(':id/room-types')
