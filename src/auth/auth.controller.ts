@@ -37,7 +37,8 @@ async login(@Body() loginDto: LoginDto) {
   if (!user) throw new UnauthorizedException();
 
     if (!user.is_verified) {
-    throw new UnauthorizedException('Please verify your email first');
+      await this.authService.resendVerificationEmail(user.email);
+      throw new UnauthorizedException('Please verify your email first, check your inbox');
   }
 
   return this.authService.login(user, loginDto.password);

@@ -219,40 +219,56 @@ const userData = {
 }
 
 async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User> }> {
+  console.log('=== EMAIL VERIFICATION DEBUG ===');
+  console.log('Received token:', token);
+  console.log('Token length:', token.length);
+
   if (!token || token.length !== 64) {
+    console.log('Invalid token format');
     throw new BadRequestException('Invalid verification token format');
   }
 
-  // Find user with valid token
-  const { data: user, error } = await this.supabase
+  // First, let's check if the token exists at all (ignoring expiry for debugging)
+  const { data: tokenCheck, error: tokenCheckError } = await this.supabase
     .client
     .from('users')
-    .select('*')
+    .select('id, email, verification_token, verification_token_expires_at, is_verified')
     .eq('verification_token', token)
-    .gt('verification_token_expires_at', new Date().toISOString())
     .single();
 
-  if (error || !user) {
-    // Check if token exists but is expired
-    const { data: expiredUser } = await this.supabase
-      .client
-      .from('users')
-      .select('id')
-      .eq('verification_token', token)
-      .single();
+  console.log('Token check result:', tokenCheck);
+  console.log('Token check error:', tokenCheckError);
 
-    if (expiredUser) {
-      throw new BadRequestException('Verification token has expired. Please request a new verification email.');
-    }
-    
-    throw new BadRequestException('Invalid or expired verification token');
+  if (tokenCheckError && tokenCheckError.code !== 'PGRST116') {
+    console.error('Database error during token check:', tokenCheckError);
+    throw new InternalServerErrorException('Database error during verification');
   }
 
-  if (user.is_verified) {
+  if (!tokenCheck) {
+    console.log('Token not found in database');
+    throw new BadRequestException('Invalid verification token');
+  }
+
+  // Check if already verified
+  if (tokenCheck.is_verified) {
+    console.log('User already verified');
     throw new BadRequestException('Email is already verified');
   }
 
-  // Update user as verified and clear token
+  // Check expiry
+  const now = new Date();
+  const expiryDate = new Date(tokenCheck.verification_token_expires_at);
+  console.log('Current time:', now.toISOString());
+  console.log('Token expiry:', expiryDate.toISOString());
+  console.log('Token expired?', now > expiryDate);
+
+  if (now > expiryDate) {
+    console.log('Token has expired');
+    throw new BadRequestException('Verification token has expired. Please request a new verification email.');
+  }
+
+  // Now update the user
+  console.log('Updating user with ID:', tokenCheck.id);
   const { data: updatedUser, error: updateError } = await this.supabase
     .client
     .from('users')
@@ -262,23 +278,36 @@ async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User
       verification_token_expires_at: null,
       verified_at: new Date().toISOString()
     })
-    .eq('id', user.id)
+    .eq('id', tokenCheck.id)
     .select('id, email, is_verified, verified_at')
     .single();
 
+  console.log('Update result:', updatedUser);
+  console.log('Update error:', updateError);
+
   if (updateError) {
-    console.log('Supabase update response:', updatedUser, updateError);
+    console.error('Failed to update user:', updateError);
     throw new InternalServerErrorException('Failed to verify email');
   }
 
+  if (!updatedUser) {
+    console.error('Update returned no data');
+    throw new InternalServerErrorException('Verification update failed');
+  }
+
+  console.log('=== VERIFICATION SUCCESSFUL ===');
   return {
     message: 'Email verified successfully',
     user: updatedUser
   };
 }
 
-// Add method to resend verification email
+// Replace your resendVerificationEmail method with this enhanced debug version
+
 async resendVerificationEmail(email: string): Promise<{ message: string }> {
+  console.log('=== RESEND VERIFICATION DEBUG ===');
+  console.log('Email:', email);
+
   const { data: user, error } = await this.supabase
     .client
     .from('users')
@@ -286,11 +315,18 @@ async resendVerificationEmail(email: string): Promise<{ message: string }> {
     .eq('email', email)
     .single();
 
+  console.log('User found:', !!user);
+  console.log('User ID:', user?.id);
+  console.log('User verified status:', user?.is_verified);
+  console.log('Current verification token:', user?.verification_token);
+
   if (error || !user) {
+    console.log('User not found error:', error);
     throw new NotFoundException('User not found');
   }
 
   if (user.is_verified) {
+    console.log('Email already verified');
     throw new BadRequestException('Email is already verified');
   }
 
@@ -298,24 +334,57 @@ async resendVerificationEmail(email: string): Promise<{ message: string }> {
   const verificationToken = crypto.randomBytes(32).toString('hex');
   const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
+  console.log('New verification token:', verificationToken);
+  console.log('Token expiry:', tokenExpiry.toISOString());
+
   // Update user with new token
-  const { error: updateError } = await this.supabase
+  const { data: updateResult, error: updateError } = await this.supabase
     .client
     .from('users')
     .update({
       verification_token: verificationToken,
       verification_token_expires_at: tokenExpiry.toISOString()
     })
-    .eq('id', user.id);
+    .eq('id', user.id)
+    .select('id, email, verification_token, verification_token_expires_at'); // Return updated data
+
+  console.log('Update result:', updateResult);
+  console.log('Update error:', updateError);
 
   if (updateError) {
+    console.error('Failed to update token:', updateError);
     throw new InternalServerErrorException('Failed to update verification token');
   }
 
+  // Verify the token was actually saved
+  console.log('=== VERIFYING TOKEN WAS SAVED ===');
+  const { data: verifyUpdate, error: verifyError } = await this.supabase
+    .client
+    .from('users')
+    .select('id, email, verification_token, verification_token_expires_at')
+    .eq('id', user.id)
+    .single();
+
+  console.log('Verification check result:', verifyUpdate);
+  console.log('Verification check error:', verifyError);
+  console.log('Token saved correctly?', verifyUpdate?.verification_token === verificationToken);
+
+  // Also check if we can find it by token
+  const { data: tokenLookup, error: tokenLookupError } = await this.supabase
+    .client
+    .from('users')
+    .select('id, email, verification_token')
+    .eq('verification_token', verificationToken)
+    .single();
+
+  console.log('Token lookup result:', tokenLookup);
+  console.log('Token lookup error:', tokenLookupError);
+
   // Send new verification email
   try {
-    const verificationUrl = `${process.env.BACKEND_URL}/auth/verify/${verificationToken}`;
-    await this.mailService.sendVerificationEmail(user.email, verificationUrl);
+    console.log('Sending verification email...');
+    await this.mailService.sendVerificationEmail(user.email, verificationToken);
+    console.log('Verification email sent successfully');
   } catch (error) {
     console.error('Failed to send verification email:', error);
     throw new InternalServerErrorException('Failed to send verification email');

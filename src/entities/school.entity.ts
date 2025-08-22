@@ -1,5 +1,4 @@
 import { Entity, Column, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
-import { Hostel } from './hostel.entity';
 
 @Entity('schools')
 export class School {
@@ -20,7 +19,12 @@ export class School {
 
   @Column('timestamptz', { default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
-
-//   @OneToMany(() => Hostel, (hostel) => hostel.school)
-//   hostels: Hostel[];
 }
+
+// CREATE TABLE schools (
+//   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+//   name TEXT NOT NULL,
+//   domain TEXT NOT NULL UNIQUE,
+//   location GEOMETRY(Point, 4326) NOT NULL,
+//   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+// );

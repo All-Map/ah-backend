@@ -39,78 +39,79 @@ export class BookingsService {
     private readonly dataSource: DataSource, 
   ) {}
 
-  // Create a new booking
 async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
-    const { hostelId, roomId, studentId, checkInDate, checkOutDate, bookingType, ...bookingData } = createBookingDto;
+  const { hostelId, roomId, studentId, checkInDate, checkOutDate, bookingType, ...bookingData } = createBookingDto;
 
-    // Get user information
-    const user = await this.userRepository.findOne({ where: { id: studentId } });
-    if (!user) {
-      throw new NotFoundException(`User with ID ${studentId} not found`);
+  // Get user information
+  const user = await this.userRepository.findOne({ where: { id: studentId } });
+  if (!user) {
+    throw new NotFoundException(`User with ID ${studentId} not found`);
+  }
+
+  // Check if user already has an active booking
+  await this.validateSingleBookingConstraint(studentId);
+
+  // Verify hostel exists
+  const hostel = await this.hostelRepository.findOne({ where: { id: hostelId } });
+  if (!hostel) {
+    throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
+  }
+
+  // Verify room exists and belongs to the hostel
+  const room = await this.roomRepository.findOne({
+    where: { id: roomId, hostelId },
+    relations: ['roomType']
+  });
+  if (!room) {
+    throw new NotFoundException(`Room with ID ${roomId} not found in this hostel`);
+  }
+
+  // Validate gender compatibility
+  await this.validateGenderCompatibility(user, room);
+
+  // Check if room is available
+  if (!room.isAvailable()) {
+    throw new ConflictException('Room is not available for booking');
+  }
+
+  // Validate dates
+  const checkIn = new Date(checkInDate);
+  const checkOut = new Date(checkOutDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (checkIn < today) {
+    throw new BadRequestException('Check-in date cannot be in the past');
+  }
+
+  if (checkOut <= checkIn) {
+    throw new BadRequestException('Check-out date must be after check-in date');
+  }
+
+  // Check for conflicting bookings
+  const conflictingBookings = await this.bookingRepository.find({
+    where: {
+      roomId,
+      status: In([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]),
+      checkInDate: Between(checkIn, checkOut),
     }
+  });
 
-    // Check if user already has an active booking
-    await this.validateSingleBookingConstraint(studentId);
+  if (conflictingBookings.length > 0) {
+    throw new ConflictException('Room is already booked for the selected dates');
+  }
 
-    // Verify hostel exists
-    const hostel = await this.hostelRepository.findOne({ where: { id: hostelId } });
-    if (!hostel) {
-      throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
-    }
+  // Calculate total amount
+  const totalAmount = await this.calculateBookingAmount(room.roomType, bookingType, checkIn, checkOut);
+  
+  // Set payment due date (typically 7 days from booking creation)
+  const paymentDueDate = new Date();
+  paymentDueDate.setDate(paymentDueDate.getDate() + 7);
 
-    // Verify room exists and belongs to the hostel
-    const room = await this.roomRepository.findOne({
-      where: { id: roomId, hostelId },
-      relations: ['roomType']
-    });
-    if (!room) {
-      throw new NotFoundException(`Room with ID ${roomId} not found in this hostel`);
-    }
-
-    // Validate gender compatibility
-    await this.validateGenderCompatibility(user, room);
-
-    // Check if room is available
-    if (!room.isAvailable()) {
-      throw new ConflictException('Room is not available for booking');
-    }
-
-    // Validate dates
-    const checkIn = new Date(checkInDate);
-    const checkOut = new Date(checkOutDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    if (checkIn < today) {
-      throw new BadRequestException('Check-in date cannot be in the past');
-    }
-
-    if (checkOut <= checkIn) {
-      throw new BadRequestException('Check-out date must be after check-in date');
-    }
-
-    // Check for conflicting bookings
-    const conflictingBookings = await this.bookingRepository.find({
-      where: {
-        roomId,
-        status: In([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]),
-        checkInDate: Between(checkIn, checkOut),
-      }
-    });
-
-    if (conflictingBookings.length > 0) {
-      throw new ConflictException('Room is already booked for the selected dates');
-    }
-
-    // Calculate total amount
-    const totalAmount = await this.calculateBookingAmount(room.roomType, bookingType, checkIn, checkOut);
-    
-    // Set payment due date (typically 7 days from booking creation)
-    const paymentDueDate = new Date();
-    paymentDueDate.setDate(paymentDueDate.getDate() + 7);
-
+  // Use transaction to ensure atomicity
+  return await this.dataSource.transaction(async manager => {
     // Create booking
-    const booking = this.bookingRepository.create({
+    const booking = manager.create(Booking, {
       hostelId,
       roomId,
       studentId,
@@ -123,17 +124,25 @@ async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
       ...bookingData
     });
 
-    const savedBooking = await this.bookingRepository.save(booking);
+    const savedBooking = await manager.save(Booking, booking);
 
-    // Reserve the room (increase current occupancy)
+    // Update room occupancy
     room.currentOccupancy += 1;
     if (room.currentOccupancy >= room.maxOccupancy) {
       room.status = RoomStatus.OCCUPIED;
     }
-    await this.roomRepository.save(room);
+    await manager.save(Room, room);
+
+    // FIXED: Update room type availability
+    const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+    if (roomType && roomType.availableRooms > 0) {
+      roomType.availableRooms -= 1;
+      await manager.save(RoomType, roomType);
+    }
 
     return savedBooking;
-  }
+  });
+}
 
   /**
    * Validates that a user can only have one active booking at a time
@@ -271,105 +280,108 @@ async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
   }
 
   // Get bookings with filtering and pagination
-  async getBookings(filterDto: BookingFilterDto) {
-    const {
-      hostelId,
-      roomId,
-      studentId,
-      status,
-      bookingType,
-      paymentStatus,
+async getBookings(filterDto: BookingFilterDto) {
+  const {
+    hostelId,
+    roomId,
+    studentId,
+    status,
+    bookingType,
+    paymentStatus,
+    checkInFrom,
+    checkInTo,
+    search,
+    page = 1,
+    limit = 10,
+    sortBy = 'createdAt',
+    sortOrder = 'DESC'
+  } = filterDto;
+
+  const queryBuilder = this.bookingRepository
+    .createQueryBuilder('booking')
+    .leftJoinAndSelect('booking.hostel', 'hostel')
+    .leftJoinAndSelect('booking.room', 'room')
+    .leftJoinAndSelect('room.roomType', 'roomType');
+
+  // Apply filters (keep existing filter logic)
+  if (hostelId) {
+    queryBuilder.andWhere('booking.hostelId = :hostelId', { hostelId });
+  }
+
+  if (roomId) {
+    queryBuilder.andWhere('booking.roomId = :roomId', { roomId });
+  }
+
+  if (studentId) {
+    queryBuilder.andWhere('booking.studentId = :studentId', { studentId });
+  }
+
+  if (status) {
+    queryBuilder.andWhere('booking.status = :status', { status });
+  }
+
+  if (bookingType) {
+    queryBuilder.andWhere('booking.bookingType = :bookingType', { bookingType });
+  }
+
+  if (paymentStatus) {
+    queryBuilder.andWhere('booking.paymentStatus = :paymentStatus', { paymentStatus });
+  }
+
+  if (checkInFrom && checkInTo) {
+    queryBuilder.andWhere('booking.checkInDate BETWEEN :checkInFrom AND :checkInTo', {
       checkInFrom,
-      checkInTo,
-      search,
-      page = 1,
-      limit = 10,
-      sortBy = 'createdAt',
-      sortOrder = 'DESC'
-    } = filterDto;
-
-    const queryBuilder = this.bookingRepository
-      .createQueryBuilder('booking')
-      .leftJoinAndSelect('booking.hostel', 'hostel')
-      .leftJoinAndSelect('booking.room', 'room')
-      .leftJoinAndSelect('room.roomType', 'roomType');
-
-    // Apply filters
-    if (hostelId) {
-      queryBuilder.andWhere('booking.hostelId = :hostelId', { hostelId });
-    }
-
-    if (roomId) {
-      queryBuilder.andWhere('booking.roomId = :roomId', { roomId });
-    }
-
-    if (studentId) {
-      queryBuilder.andWhere('booking.studentId = :studentId', { studentId });
-    }
-
-    if (status) {
-      queryBuilder.andWhere('booking.status = :status', { status });
-    }
-
-    if (bookingType) {
-      queryBuilder.andWhere('booking.bookingType = :bookingType', { bookingType });
-    }
-
-    if (paymentStatus) {
-      queryBuilder.andWhere('booking.paymentStatus = :paymentStatus', { paymentStatus });
-    }
-
-    if (checkInFrom && checkInTo) {
-      queryBuilder.andWhere('booking.checkInDate BETWEEN :checkInFrom AND :checkInTo', {
-        checkInFrom,
-        checkInTo
-      });
-    } else if (checkInFrom) {
-      queryBuilder.andWhere('booking.checkInDate >= :checkInFrom', { checkInFrom });
-    } else if (checkInTo) {
-      queryBuilder.andWhere('booking.checkInDate <= :checkInTo', { checkInTo });
-    }
-
-    if (search) {
-      queryBuilder.andWhere(
-        '(booking.studentName ILIKE :search OR booking.studentEmail ILIKE :search OR booking.studentPhone ILIKE :search OR room.roomNumber ILIKE :search)',
-        { search: `%${search}%` }
-      );
-    }
-
-    // Apply sorting
-    queryBuilder.orderBy(`booking.${sortBy}`, sortOrder);
-
-    // Apply pagination
-    const offset = (page - 1) * limit;
-    queryBuilder.skip(offset).take(limit);
-
-    const [bookings, total] = await queryBuilder.getManyAndCount();
-
-    return {
-      bookings,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
-      }
-    };
-  }
-
-  // Get booking by ID
-  async getBookingById(id: string): Promise<Booking> {
-    const booking = await this.bookingRepository.findOne({
-      where: { id },
-      relations: ['hostel', 'room', 'room.roomType']
+      checkInTo
     });
-
-    if (!booking) {
-      throw new NotFoundException(`Booking with ID ${id} not found`);
-    }
-
-    return booking;
+  } else if (checkInFrom) {
+    queryBuilder.andWhere('booking.checkInDate >= :checkInFrom', { checkInFrom });
+  } else if (checkInTo) {
+    queryBuilder.andWhere('booking.checkInDate <= :checkInTo', { checkInTo });
   }
+
+  if (search) {
+    queryBuilder.andWhere(
+      '(booking.studentName ILIKE :search OR booking.studentEmail ILIKE :search OR booking.studentPhone ILIKE :search OR room.roomNumber ILIKE :search OR hostel.name ILIKE :search)',
+      { search: `%${search}%` }
+    );
+  }
+
+  // Apply sorting
+  queryBuilder.orderBy(`booking.${sortBy}`, sortOrder);
+
+  // Apply pagination
+  const offset = (page - 1) * limit;
+  queryBuilder.skip(offset).take(limit);
+
+  const [bookings, total] = await queryBuilder.getManyAndCount();
+
+  return {
+    bookings,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit)
+    }
+  };
+}
+
+
+async getBookingById(id: string): Promise<Booking> {
+  const booking = await this.bookingRepository
+    .createQueryBuilder('booking')
+    .leftJoinAndSelect('booking.hostel', 'hostel')
+    .leftJoinAndSelect('booking.room', 'room')
+    .leftJoinAndSelect('room.roomType', 'roomType')
+    .where('booking.id = :id', { id })
+    .getOne();
+
+  if (!booking) {
+    throw new NotFoundException(`Booking with ID ${id} not found`);
+  }
+
+  return booking;
+}
 
   // Update booking
   async updateBooking(id: string, updateBookingDto: UpdateBookingDto): Promise<Booking> {
@@ -447,21 +459,30 @@ async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
     return await this.bookingRepository.save(booking);
   }
 
-  async cancelBooking(id: string, cancelDto: CancelBookingDto): Promise<Booking> {
-    const booking = await this.getBookingById(id);
+async cancelBooking(id: string, cancelDto: CancelBookingDto): Promise<Booking> {
+  const booking = await this.getBookingById(id);
 
-    if (!booking.canCancel()) {
-      throw new BadRequestException('Booking cannot be cancelled');
-    }
+  if (!booking.canCancel()) {
+    throw new BadRequestException('Booking cannot be cancelled');
+  }
 
+  // Use transaction to ensure atomicity
+  return await this.dataSource.transaction(async manager => {
     // Free up the room
-    const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
+    const room = await manager.findOne(Room, { where: { id: booking.roomId } });
     if (room) {
       room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
       if (room.currentOccupancy === 0) {
         room.status = RoomStatus.AVAILABLE;
       }
-      await this.roomRepository.save(room);
+      await manager.save(Room, room);
+
+      // FIXED: Update room type availability
+      const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+      if (roomType) {
+        roomType.availableRooms = Math.min(roomType.totalRooms, roomType.availableRooms + 1);
+        await manager.save(RoomType, roomType);
+      }
     }
 
     booking.status = BookingStatus.CANCELLED;
@@ -474,8 +495,9 @@ async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
     // Update payment status
     booking.paymentStatus = PaymentStatus.REFUNDED;
 
-    return await this.bookingRepository.save(booking);
-  }
+    return await manager.save(Booking, booking);
+  });
+}
 
   // Check in student
   async checkIn(id: string, checkInDto: CheckInDto): Promise<Booking> {
@@ -506,14 +528,15 @@ async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
     return await this.bookingRepository.save(booking);
   }
 
-  // Check out student
-  async checkOut(id: string, checkOutDto: CheckOutDto): Promise<Booking> {
-    const booking = await this.getBookingById(id);
+async checkOut(id: string, checkOutDto: CheckOutDto): Promise<Booking> {
+  const booking = await this.getBookingById(id);
 
-    if (!booking.canCheckOut()) {
-      throw new BadRequestException('Booking cannot be checked out');
-    }
+  if (!booking.canCheckOut()) {
+    throw new BadRequestException('Booking cannot be checked out');
+  }
 
+  // Use transaction to ensure atomicity
+  return await this.dataSource.transaction(async manager => {
     booking.status = BookingStatus.CHECKED_OUT;
     booking.checkedOutAt = new Date();
     if (checkOutDto.notes) {
@@ -521,17 +544,82 @@ async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
     }
 
     // Free up the room
-    const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
+    const room = await manager.findOne(Room, { where: { id: booking.roomId } });
     if (room) {
       room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
       if (room.currentOccupancy === 0) {
         room.status = RoomStatus.AVAILABLE;
       }
-      await this.roomRepository.save(room);
+      await manager.save(Room, room);
+
+      // FIXED: Update room type availability
+      const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+      if (roomType) {
+        roomType.availableRooms = Math.min(roomType.totalRooms, roomType.availableRooms + 1);
+        await manager.save(RoomType, roomType);
+      }
     }
 
-    return await this.bookingRepository.save(booking);
+    return await manager.save(Booking, booking);
+  });
+}
+
+// Delete booking (admin only, strict conditions) - UPDATED
+async deleteBooking(id: string): Promise<void> {
+  const booking = await this.getBookingById(id);
+
+  if (booking.status === BookingStatus.CHECKED_IN) {
+    throw new BadRequestException('Cannot delete checked-in booking');
   }
+
+  if (booking.amountPaid > 0) {
+    throw new BadRequestException('Cannot delete booking with payments');
+  }
+
+  // Use transaction to ensure atomicity
+  await this.dataSource.transaction(async manager => {
+    // Free up the room if it was reserved
+    if ([BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
+      const room = await manager.findOne(Room, { where: { id: booking.roomId } });
+      if (room) {
+        room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
+        if (room.currentOccupancy === 0) {
+          room.status = RoomStatus.AVAILABLE;
+        }
+        await manager.save(Room, room);
+
+        // FIXED: Update room type availability
+        const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+        if (roomType) {
+          roomType.availableRooms = Math.min(roomType.totalRooms, roomType.availableRooms + 1);
+          await manager.save(RoomType, roomType);
+        }
+      }
+    }
+
+    await manager.remove(Booking, booking);
+  });
+}
+
+async syncRoomTypeAvailability(): Promise<void> {
+  const roomTypes = await this.roomTypeRepository.find();
+  
+  for (const roomType of roomTypes) {
+    // Get all rooms of this type
+    const rooms = await this.roomRepository.find({
+      where: { roomTypeId: roomType.id }
+    });
+
+    // Calculate available rooms based on actual room status
+    const availableRooms = rooms.filter(room => room.isAvailable()).length;
+    
+    // Update if different
+    if (roomType.availableRooms !== availableRooms) {
+      roomType.availableRooms = availableRooms;
+      await this.roomTypeRepository.save(roomType);
+    }
+  }
+}
 
 async recordPayment(bookingId: string, paymentDto: PaymentDto, receivedBy?: string): Promise<{ payment: Payment; booking: Booking }> {
   // Use transaction to ensure both payment and booking updates succeed together
@@ -619,13 +707,16 @@ const updatedBooking = await manager.save(Booking, booking);
   }
 
   // Get bookings by student
-  async getBookingsByStudent(studentId: string): Promise<Booking[]> {
-    return await this.bookingRepository.find({
-      where: { studentId },
-      relations: ['hostel', 'room', 'room.roomType'],
-      order: { createdAt: 'DESC' }
-    });
-  }
+async getBookingsByStudent(studentId: string): Promise<Booking[]> {
+  return await this.bookingRepository
+    .createQueryBuilder('booking')
+    .leftJoinAndSelect('booking.hostel', 'hostel')
+    .leftJoinAndSelect('booking.room', 'room')
+    .leftJoinAndSelect('room.roomType', 'roomType')
+    .where('booking.studentId = :studentId', { studentId })
+    .orderBy('booking.createdAt', 'DESC')
+    .getMany();
+}
 
   // Get bookings by hostel
   async getBookingsByHostel(hostelId: string, filterDto: Partial<BookingFilterDto> = {}): Promise<Booking[]> {
@@ -641,85 +732,116 @@ const updatedBooking = await manager.save(Booking, booking);
     });
   }
 
-  // Delete booking (admin only, strict conditions)
-  async deleteBooking(id: string): Promise<void> {
-    const booking = await this.getBookingById(id);
-
-    if (booking.status === BookingStatus.CHECKED_IN) {
-      throw new BadRequestException('Cannot delete checked-in booking');
-    }
-
-    if (booking.amountPaid > 0) {
-      throw new BadRequestException('Cannot delete booking with payments');
-    }
-
-    // Free up the room if it was reserved
-    if ([BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
-      const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-      if (room) {
-        room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
-        if (room.currentOccupancy === 0) {
-          room.status = RoomStatus.AVAILABLE;
-        }
-        await this.roomRepository.save(room);
-      }
-    }
-
-    await this.bookingRepository.remove(booking);
-  }
-
   // Get booking statistics
-  async getBookingStatistics(hostelId?: string) {
-    let queryBuilder = this.bookingRepository.createQueryBuilder('booking');
+ // Fixed getBookingStatistics method in bookings.service.ts
 
-    if (hostelId) {
-      queryBuilder = queryBuilder.where('booking.hostelId = :hostelId', { hostelId });
+async getBookingStatistics(hostelId?: string) {
+  let queryBuilder = this.bookingRepository.createQueryBuilder('booking');
+
+  if (hostelId) {
+    queryBuilder = queryBuilder.where('booking.hostelId = :hostelId', { hostelId });
+  }
+
+  const bookings = await queryBuilder.getMany();
+
+  const stats = {
+    total: bookings.length,
+    pending: 0,
+    confirmed: 0,
+    checkedIn: 0,
+    checkedOut: 0,
+    cancelled: 0,
+    noShow: 0,
+    totalRevenue: 0,
+    paidRevenue: 0,
+    pendingRevenue: 0,
+    byBookingType: {} as Record<string, number>,
+    byPaymentStatus: {} as Record<string, number>,
+    averageStayDuration: 0,
+    occupancyRate: 0
+  };
+
+  let totalDuration = 0;
+
+  bookings.forEach(booking => {
+    // FIXED: Map booking status enum values to the expected property names
+    switch (booking.status) {
+      case BookingStatus.PENDING:
+        stats.pending++;
+        break;
+      case BookingStatus.CONFIRMED:
+        stats.confirmed++;
+        break;
+      case BookingStatus.CHECKED_IN:
+        stats.checkedIn++;
+        break;
+      case BookingStatus.CHECKED_OUT:
+        stats.checkedOut++;
+        break;
+      case BookingStatus.CANCELLED:
+        stats.cancelled++;
+        break;
+      case BookingStatus.NO_SHOW:
+        stats.noShow++;
+        break;
+      default:
+        console.warn('Unknown booking status:', booking.status);
     }
 
-    const bookings = await queryBuilder.getMany();
+    // Revenue calculations
+    stats.totalRevenue += Number(booking.totalAmount);
+    stats.paidRevenue += Number(booking.amountPaid);
+    stats.pendingRevenue += Number(booking.amountDue);
 
-    const stats = {
-      total: bookings.length,
-      pending: 0,
-      confirmed: 0,
-      checkedIn: 0,
-      checkedOut: 0,
-      cancelled: 0,
-      noShow: 0,
-      totalRevenue: 0,
-      paidRevenue: 0,
-      pendingRevenue: 0,
-      byBookingType: {} as Record<string, number>,
-      byPaymentStatus: {} as Record<string, number>,
-      averageStayDuration: 0,
-      occupancyRate: 0
-    };
+    // Booking type distribution
+    stats.byBookingType[booking.bookingType] = (stats.byBookingType[booking.bookingType] || 0) + 1;
 
-    let totalDuration = 0;
+    // Payment status distribution
+    stats.byPaymentStatus[booking.paymentStatus] = (stats.byPaymentStatus[booking.paymentStatus] || 0) + 1;
 
-    bookings.forEach(booking => {
-      // Status counts
-      stats[booking.status]++;
+    // Duration calculation
+    totalDuration += booking.getDurationInDays();
+  });
 
-      // Revenue calculations
-      stats.totalRevenue += Number(booking.totalAmount);
-      stats.paidRevenue += Number(booking.amountPaid);
-      stats.pendingRevenue += Number(booking.amountDue);
+  stats.averageStayDuration = bookings.length > 0 ? totalDuration / bookings.length : 0;
 
-      // Booking type distribution
-      stats.byBookingType[booking.bookingType] = (stats.byBookingType[booking.bookingType] || 0) + 1;
-
-      // Payment status distribution
-      stats.byPaymentStatus[booking.paymentStatus] = (stats.byPaymentStatus[booking.paymentStatus] || 0) + 1;
-
-      // Duration calculation
-      totalDuration += booking.getDurationInDays();
-    });
-
-    stats.averageStayDuration = bookings.length > 0 ? totalDuration / bookings.length : 0;
-
-    return stats;
+  // Calculate occupancy rate if possible
+  // You might need to get total room capacity for accurate calculation
+  if (hostelId) {
+    try {
+      const totalRooms = await this.roomRepository
+        .createQueryBuilder('room')
+        .where('room.hostelId = :hostelId', { hostelId })
+        .getCount();
+      
+      if (totalRooms > 0) {
+        stats.occupancyRate = (stats.checkedIn / totalRooms) * 100;
+      }
+    } catch (error) {
+      console.error('Failed to calculate occupancy rate:', error);
+      stats.occupancyRate = 0;
+    }
   }
+
+  // Add some debug logging to help troubleshoot
+  console.log('Booking Statistics:', {
+    totalBookings: bookings.length,
+    statusCounts: {
+      pending: stats.pending,
+      confirmed: stats.confirmed,
+      checkedIn: stats.checkedIn,
+      checkedOut: stats.checkedOut,
+      cancelled: stats.cancelled
+    },
+    revenue: {
+      total: stats.totalRevenue,
+      paid: stats.paidRevenue,
+      pending: stats.pendingRevenue
+    }
+  });
+
+  return stats;
+}
 
   // Generate booking report
   async generateReport(filterDto: BookingReportFilterDto) {

@@ -147,15 +147,15 @@ export class Hostel {
     return this.roomTypes?.reduce((total, type) => total + type.availableRooms, 0) || 0;
   }
 
-  getLowestPrice(): number {
-    if (!this.roomTypes?.length) return this.base_price;
-    return Math.min(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
-  }
+getLowestPrice(): number {
+  if (!this.roomTypes?.length) return this.base_price;
+  return Math.min(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
+}
 
-  getHighestPrice(): number {
-    if (!this.roomTypes?.length) return this.base_price;
-    return Math.max(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
-  }
+getHighestPrice(): number {
+  if (!this.roomTypes?.length) return this.base_price;
+  return Math.max(...this.roomTypes.map(type => type.pricePerSemester), this.base_price);
+}
 
   // Payment method helpers
   acceptsBankPayments(): boolean {
