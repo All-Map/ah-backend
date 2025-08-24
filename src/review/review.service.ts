@@ -372,13 +372,23 @@ export class ReviewsService {
   /**
    * Get reviews for a specific hostel
    */
-  async getHostelReviews(hostelId: string, filterDto: Partial<ReviewFilterDto> = {}) {
-    return this.getReviews({
-      ...filterDto,
-      hostelId,
-      status: filterDto.status || ReviewStatus.APPROVED
-    });
-  }
+async getHostelReviews(hostelId: string, filterDto: Partial<ReviewFilterDto> = {}) {
+  console.log('🔧 Service - getHostelReviews called:', { hostelId, filterDto });
+  
+  const result = await this.getReviews({
+    ...filterDto,
+    hostelId,
+    status: filterDto.status || ReviewStatus.APPROVED // This might be the issue!
+  });
+  
+  console.log('🔧 Service - getReviews result:', {
+    reviewCount: result.reviews?.length || 0,
+    total: result.pagination?.total || 0,
+    appliedStatus: filterDto.status || ReviewStatus.APPROVED
+  });
+  
+  return result;
+}
 
   /**
    * Get reviews by a specific student

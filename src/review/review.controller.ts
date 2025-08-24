@@ -186,25 +186,19 @@ export class ReviewsController {
     }
   }
 
-  @Get('hostel/:hostelId')
-  @ApiOperation({ summary: 'Get reviews for a specific hostel' })
-  @ApiParam({ name: 'hostelId', description: 'Hostel ID' })
-  @ApiQuery({ name: 'page', required: false, description: 'Page number' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
-  @ApiQuery({ name: 'sortBy', required: false, enum: ['createdAt', 'rating', 'helpfulCount'] })
-  @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
-  @ApiQuery({ name: 'minRating', required: false, description: 'Minimum rating filter' })
-  @ApiQuery({ name: 'maxRating', required: false, description: 'Maximum rating filter' })
-  @ApiResponse({ 
-    status: HttpStatus.OK, 
-    description: 'Hostel reviews retrieved successfully' 
-  })
-  async getHostelReviews(
-    @Param('hostelId', ParseUUIDPipe) hostelId: string,
-    @Query() filterDto: Partial<ReviewFilterDto>,
-  ) {
-    return this.reviewsService.getHostelReviews(hostelId, filterDto);
-  }
+@Get('hostel/:hostelId')
+async getHostelReviews(
+  @Param('hostelId', ParseUUIDPipe) hostelId: string,
+  @Query() filterDto: Partial<ReviewFilterDto>,
+) {
+  console.log('🏨 Controller - getHostelReviews called:', { hostelId, filterDto });
+  const result = await this.reviewsService.getHostelReviews(hostelId, filterDto);
+  console.log('📊 Controller - returning:', { 
+    reviewCount: result.reviews?.length || 0, 
+    total: result.pagination?.total || 0 
+  });
+  return result;
+}
 
   @Get('hostel/:hostelId/stats')
   @ApiOperation({ summary: 'Get review statistics for a hostel' })

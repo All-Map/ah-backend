@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { CreateHostelDto } from './dto/create-hostel.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -14,12 +14,92 @@ export class HostelsService {
     private supabase: SupabaseService,
     private cloudinary: CloudinaryService,
     private roomsService: RoomsService, 
-        @InjectRepository(RoomType)
-        private readonly roomTypeRepository: Repository<RoomType>,
+    @InjectRepository(RoomType)
+    private readonly roomTypeRepository: Repository<RoomType>,
   ) {}
 
   private toPoint(lng: number, lat: number): string {
     return `POINT(${lng} ${lat})`;
+  }
+
+  // New method: Verify hostel ownership
+  async verifyOwnership(hostelId: string, userId: string): Promise<void> {
+    try {
+      const { data, error } = await this.supabase.client
+        .from('hostels')
+        .select('admin_id')
+        .eq('id', hostelId)
+        .single();
+
+      if (error) {
+        console.error('Supabase verifyOwnership error:', error);
+        throw new NotFoundException('Hostel not found');
+      }
+
+      if (data.admin_id !== userId) {
+        throw new ForbiddenException('You do not have permission to access this hostel');
+      }
+    } catch (error) {
+      console.error('Error in verifyOwnership method:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to verify ownership: ${error.message}`);
+    }
+  }
+
+  // New method: Find hostels by admin ID
+  async findByAdminId(adminId: string) {
+    try {
+      console.log('Fetching hostels for admin ID:', adminId);
+      
+      const { data, error } = await this.supabase.client
+        .from('hostels')
+        .select('*')
+        .eq('admin_id', adminId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Supabase findByAdminId error:', error);
+        throw new BadRequestException(`Database error: ${error.message}`);
+      }
+      
+      console.log(`Found ${data?.length || 0} hostels for admin ${adminId}`);
+      return data || [];
+    } catch (error) {
+      console.error('Error in findByAdminId method:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to fetch hostels: ${error.message}`);
+    }
+  }
+
+  // New method: Find one hostel by ID and admin ID
+  async findOneByAdminId(hostelId: string, adminId: string) {
+    try {
+      console.log('Fetching hostel:', hostelId, 'for admin:', adminId);
+      
+      const { data, error } = await this.supabase.client
+        .from('hostels')
+        .select('*')
+        .eq('id', hostelId)
+        .eq('admin_id', adminId)
+        .single();
+
+      if (error) {
+        console.error('Supabase findOneByAdminId error:', error);
+        throw new NotFoundException('Hostel not found or you do not have permission to access it');
+      }
+      
+      return data;
+    } catch (error) {
+      console.error('Error in findOneByAdminId method:', error);
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to fetch hostel: ${error.message}`);
+    }
   }
 
   async create(adminId: string, createHostelDto: CreateHostelDto, files?: import('multer').File[]) {
@@ -156,18 +236,20 @@ export class HostelsService {
     }
   }
 
+  // Keep the original findAll method for super admins
   async findAll() {
     try {
       const { data, error } = await this.supabase.client
         .from('hostels')
-        .select('*');
+        .select('*')
+        .order('created_at', { ascending: false });
 
       if (error) {
         console.error('Supabase findAll error:', error);
         throw new BadRequestException(`Database error: ${error.message}`);
       }
       
-      return data;
+      return data || [];
     } catch (error) {
       console.error('Error in findAll method:', error);
       throw error;
@@ -194,7 +276,7 @@ export class HostelsService {
     }
   }
 
-  // New method to toggle booking status
+  // Updated method to toggle booking status with ownership verification
   async toggleBookingStatus(id: string, acceptingBookings: boolean) {
     try {
       console.log(`Toggling booking status for hostel ${id} to ${acceptingBookings}`);
@@ -235,161 +317,165 @@ export class HostelsService {
     }
   }
 
-async update(id: string, updateHostelDto: UpdateHostelDto, files?: import('multer').File[]) {
-  try {
-    const existingHostel = await this.findOne(id);
-    let imageUpdates: string[] = [];
+  async update(id: string, updateHostelDto: UpdateHostelDto, files?: import('multer').File[]) {
+    try {
+      const existingHostel = await this.findOne(id);
+      let imageUpdates: string[] = [];
 
-    // Handle image uploads
-    if (files && files.length > 0) {
-      for (const file of files) {
-        try {
-          const url = await this.cloudinary.uploadImage(file);
-          imageUpdates.push(url);
-        } catch (uploadError) {
-          console.error('Failed to upload image during update:', uploadError);
-          throw new BadRequestException(`Failed to upload image: ${uploadError.message}`);
+      // Handle image uploads
+      if (files && files.length > 0) {
+        for (const file of files) {
+          try {
+            const url = await this.cloudinary.uploadImage(file);
+            imageUpdates.push(url);
+          } catch (uploadError) {
+            console.error('Failed to upload image during update:', uploadError);
+            throw new BadRequestException(`Failed to upload image: ${uploadError.message}`);
+          }
         }
       }
-    }
 
-    // Parse and validate location if provided
-    let locationUpdate = {};
-    if (updateHostelDto.location) {
-      console.log('Location data received for update:', updateHostelDto.location, typeof updateHostelDto.location);
-      
-      let parsedLocation;
-      
-      // Parse location if it's a string
-      if (typeof updateHostelDto.location === 'string') {
-        try {
-          parsedLocation = JSON.parse(updateHostelDto.location);
-          console.log('Parsed location from string:', parsedLocation);
-        } catch (parseError) {
-          console.error('Location parse error:', parseError);
-          throw new BadRequestException('Invalid location JSON format');
+      // Parse and validate location if provided
+      let locationUpdate = {};
+      if (updateHostelDto.location) {
+        console.log('Location data received for update:', updateHostelDto.location, typeof updateHostelDto.location);
+        
+        let parsedLocation;
+        
+        // Parse location if it's a string
+        if (typeof updateHostelDto.location === 'string') {
+          try {
+            parsedLocation = JSON.parse(updateHostelDto.location);
+            console.log('Parsed location from string:', parsedLocation);
+          } catch (parseError) {
+            console.error('Location parse error:', parseError);
+            throw new BadRequestException('Invalid location JSON format');
+          }
+        } else {
+          parsedLocation = updateHostelDto.location;
+          console.log('Location already parsed:', parsedLocation);
         }
-      } else {
-        parsedLocation = updateHostelDto.location;
-        console.log('Location already parsed:', parsedLocation);
+        
+        // Validate location data
+        console.log('Validating location:', parsedLocation);
+        console.log('lng type:', typeof parsedLocation?.lng, 'value:', parsedLocation?.lng);
+        console.log('lat type:', typeof parsedLocation?.lat, 'value:', parsedLocation?.lat);
+        
+        if (!parsedLocation || 
+            typeof parsedLocation.lng !== 'number' || 
+            typeof parsedLocation.lat !== 'number' ||
+            isNaN(parsedLocation.lng) ||
+            isNaN(parsedLocation.lat)) {
+          console.error('Location validation failed:', parsedLocation);
+          throw new BadRequestException(`Invalid location data provided. Expected numbers, got lng: ${typeof parsedLocation?.lng} (${parsedLocation?.lng}), lat: ${typeof parsedLocation?.lat} (${parsedLocation?.lat})`);
+        }
+        
+        locationUpdate = {
+          location: this.toPoint(parsedLocation.lng, parsedLocation.lat)
+        };
       }
-      
-      // Validate location data
-      console.log('Validating location:', parsedLocation);
-      console.log('lng type:', typeof parsedLocation?.lng, 'value:', parsedLocation?.lng);
-      console.log('lat type:', typeof parsedLocation?.lat, 'value:', parsedLocation?.lat);
-      
-      if (!parsedLocation || 
-          typeof parsedLocation.lng !== 'number' || 
-          typeof parsedLocation.lat !== 'number' ||
-          isNaN(parsedLocation.lng) ||
-          isNaN(parsedLocation.lat)) {
-        console.error('Location validation failed:', parsedLocation);
-        throw new BadRequestException(`Invalid location data provided. Expected numbers, got lng: ${typeof parsedLocation?.lng} (${parsedLocation?.lng}), lat: ${typeof parsedLocation?.lat} (${parsedLocation?.lat})`);
+
+      // Parse amenities if provided
+      let amenitiesUpdate = {};
+      if (updateHostelDto.amenities) {
+        console.log('Amenities data received for update:', updateHostelDto.amenities, typeof updateHostelDto.amenities);
+        
+        let parsedAmenities;
+        
+        // Parse amenities if it's a string
+        if (typeof updateHostelDto.amenities === 'string') {
+          try {
+            parsedAmenities = JSON.parse(updateHostelDto.amenities);
+            console.log('Parsed amenities from string:', parsedAmenities);
+          } catch (parseError) {
+            console.error('Amenities parse error:', parseError);
+            throw new BadRequestException('Invalid amenities JSON format');
+          }
+        } else {
+          parsedAmenities = updateHostelDto.amenities;
+          console.log('Amenities already parsed:', parsedAmenities);
+        }
+        
+        // Validate amenities structure
+        const expectedAmenities = ['wifi', 'laundry', 'cafeteria', 'parking', 'security'];
+        const isValidAmenities = parsedAmenities && 
+          typeof parsedAmenities === 'object' &&
+          expectedAmenities.every(amenity => 
+            parsedAmenities.hasOwnProperty(amenity) && 
+            typeof parsedAmenities[amenity] === 'boolean'
+          );
+        
+        if (!isValidAmenities) {
+          console.error('Invalid amenities structure:', parsedAmenities);
+          throw new BadRequestException('Invalid amenities data structure');
+        }
+        
+        amenitiesUpdate = { amenities: parsedAmenities };
       }
+
+      // Prepare update data - exclude location and amenities from spread to avoid conflicts
+      const { location, amenities, ...restOfDto } = updateHostelDto;
       
-      locationUpdate = {
-        location: this.toPoint(parsedLocation.lng, parsedLocation.lat)
+      const updateData = {
+        ...restOfDto,
+        base_price: updateHostelDto.base_price,
+        payment_method: updateHostelDto.payment_method,
+        bank_details: updateHostelDto.bank_details,
+        momo_details: updateHostelDto.momo_details,
+        max_occupancy: updateHostelDto.max_occupancy,
+        house_rules: updateHostelDto.house_rules,
+        nearby_facilities: updateHostelDto.nearby_facilities,
+        check_in_time: updateHostelDto.check_in_time,
+        check_out_time: updateHostelDto.check_out_time,
+        ...locationUpdate,
+        ...amenitiesUpdate,
+        images: [...(existingHostel.images || []), ...imageUpdates],
+        updated_at: new Date().toISOString()
       };
-    }
 
-    // Parse amenities if provided
-    let amenitiesUpdate = {};
-    if (updateHostelDto.amenities) {
-      console.log('Amenities data received for update:', updateHostelDto.amenities, typeof updateHostelDto.amenities);
-      
-      let parsedAmenities;
-      
-      // Parse amenities if it's a string
-      if (typeof updateHostelDto.amenities === 'string') {
-        try {
-          parsedAmenities = JSON.parse(updateHostelDto.amenities);
-          console.log('Parsed amenities from string:', parsedAmenities);
-        } catch (parseError) {
-          console.error('Amenities parse error:', parseError);
-          throw new BadRequestException('Invalid amenities JSON format');
-        }
-      } else {
-        parsedAmenities = updateHostelDto.amenities;
-        console.log('Amenities already parsed:', parsedAmenities);
+      console.log('Update data being sent to database:', updateData);
+
+      const { data, error } = await this.supabase.client
+        .from('hostels')
+        .update(updateData)
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) {
+        console.error('Supabase update error:', error);
+        throw new BadRequestException(`Database error: ${error.message}`);
       }
       
-      // Validate amenities structure
-      const expectedAmenities = ['wifi', 'laundry', 'cafeteria', 'parking', 'security'];
-      const isValidAmenities = parsedAmenities && 
-        typeof parsedAmenities === 'object' &&
-        expectedAmenities.every(amenity => 
-          parsedAmenities.hasOwnProperty(amenity) && 
-          typeof parsedAmenities[amenity] === 'boolean'
-        );
+      console.log('Successfully updated hostel:', data);
+      return data;
+    } catch (error) {
+      console.error('Error in update method:', error);
       
-      if (!isValidAmenities) {
-        console.error('Invalid amenities structure:', parsedAmenities);
-        throw new BadRequestException('Invalid amenities data structure');
+      // Clean up uploaded images if database update failed
+      if (files && files.length > 0) {
+        console.log('Cleaning up uploaded images due to error');
+        // Note: You might want to implement cleanup logic here
       }
       
-      amenitiesUpdate = { amenities: parsedAmenities };
+      // Re-throw the error with more context
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      
+      throw new BadRequestException(`Failed to update hostel: ${error.message}`);
     }
-
-    // Prepare update data - exclude location and amenities from spread to avoid conflicts
-    const { location, amenities, ...restOfDto } = updateHostelDto;
-    
-    const updateData = {
-      ...restOfDto,
-      base_price: updateHostelDto.base_price,
-      payment_method: updateHostelDto.payment_method,
-      bank_details: updateHostelDto.bank_details,
-      momo_details: updateHostelDto.momo_details,
-      max_occupancy: updateHostelDto.max_occupancy,
-      house_rules: updateHostelDto.house_rules,
-      nearby_facilities: updateHostelDto.nearby_facilities,
-      check_in_time: updateHostelDto.check_in_time,
-      check_out_time: updateHostelDto.check_out_time,
-      ...locationUpdate,
-      ...amenitiesUpdate,
-      images: [...(existingHostel.images || []), ...imageUpdates],
-      updated_at: new Date().toISOString()
-    };
-
-    console.log('Update data being sent to database:', updateData);
-
-    const { data, error } = await this.supabase.client
-      .from('hostels')
-      .update(updateData)
-      .eq('id', id)
-      .select('*')
-      .single();
-
-    if (error) {
-      console.error('Supabase update error:', error);
-      throw new BadRequestException(`Database error: ${error.message}`);
-    }
-    
-    console.log('Successfully updated hostel:', data);
-    return data;
-  } catch (error) {
-    console.error('Error in update method:', error);
-    
-    // Clean up uploaded images if database update failed
-    if (files && files.length > 0) {
-      console.log('Cleaning up uploaded images due to error');
-      // Note: You might want to implement cleanup logic here
-    }
-    
-    // Re-throw the error with more context
-    if (error instanceof BadRequestException || error instanceof NotFoundException) {
-      throw error;
-    }
-    
-    throw new BadRequestException(`Failed to update hostel: ${error.message}`);
   }
-}
 
-async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
-  const roomType = await this.roomTypeRepository.findOne({
-    where: { id: roomTypeId, hostelId },
-    relations: ['hostel']
-  });
+  async getRoomTypesByHostelId(hostelId: string): Promise<any> {
+    return this.roomsService.getRoomTypesByHostelId(hostelId);
+  }
+
+  async getRoomTypeByIdStudent(hostelId: string, roomTypeId: string): Promise<RoomType> {
+    const roomType = await this.roomTypeRepository.findOne({
+      where: { id: roomTypeId, hostelId },
+      relations: ['hostel']
+    });
 
   if (!roomType) {
     throw new NotFoundException(
@@ -400,7 +486,7 @@ async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
   return roomType;
 }
 
-  async getRoomTypesByHostelId(hostelId: string): Promise<any> {
+  async getRoomTypesByHostelIdStudent(hostelId: string): Promise<any> {
     return this.roomsService.getRoomTypesByHostelId(hostelId);
   }
 
