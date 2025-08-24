@@ -11,6 +11,7 @@ import { HostelsModule } from './hostels/hostels.module';
 import { CloudinaryService } from './cloudinary/cloudinary.service';
 import { RoomsModule } from './rooms/rooms.module';
 import { BookingsModule } from './bookings/booking.module';
+import { ReviewsModule } from './review/review.module';
 
 @Module({
   imports: [
@@ -20,7 +21,8 @@ import { BookingsModule } from './bookings/booking.module';
     AuthModule,
     HostelsModule,
     RoomsModule,
-    BookingsModule
+    BookingsModule,
+    ReviewsModule
     // UsersModule,
     // HostelsModule,
     // SchoolsModule,
