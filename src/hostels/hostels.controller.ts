@@ -148,7 +148,7 @@ export class HostelsController {
     return this.roomsService.getRoomTypeById(hostelId, roomTypeId);
   }
 
-  @Get(':id/room-types/:roomTypeId')
+  @Get(':id/students/room-types/:roomTypeId')
 @ApiOperation({ summary: 'Get room type details by ID' })
 @ApiParam({ name: 'id', description: 'Hostel ID' })
 @ApiParam({ name: 'roomTypeId', description: 'Room Type ID' })
