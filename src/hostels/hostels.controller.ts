@@ -44,18 +44,18 @@ export class HostelsController {
   }
 
   // Updated: Fetch hostels for the current user only
-  @Get("fetch")
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
-  findAll(@CurrentUser() user: any) {
-    const userId = user.id || user.sub;
-    
-    // Super admins can see all hostels, hostel admins see only their own
-    if (user.role === UserRole.SUPER_ADMIN) {
-      return this.hostelsService.findAll();
-    } else {
-      return this.hostelsService.findByAdminId(userId);
-    }
-  }
+@Get("fetch")
+@Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+async findUserHostels(@CurrentUser() user: any) {
+  const userId = user.id || user.sub;
+  
+  console.log(`User ${userId} with role ${user.role} requesting their hostels`);
+  
+  // All users (including super admins) get only their own hostels by default
+  // This ensures data security and proper access control
+  return this.hostelsService.findByAdminId(userId);
+}
+
 
   // Optional: Add a separate endpoint for super admins to get all hostels
   @Get("all")

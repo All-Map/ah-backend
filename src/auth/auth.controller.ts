@@ -44,14 +44,27 @@ async login(@Body() loginDto: LoginDto) {
   return this.authService.login(user, loginDto.password);
 }
 
- @UseGuards(JwtAuthGuard)
-  @Patch('update-profile')
-  async updateProfile(
-    @CurrentUser() user: any,
-    @Body() updateProfileDto: UpdateProfileDto,
-  ) {
-    return this.authService.updateProfile(user.sub, updateProfileDto);
-  }
+@UseGuards(JwtAuthGuard)
+@Patch('update-profile')
+async updateProfile(
+  @CurrentUser() user: any,
+  @Body() updateProfileDto: UpdateProfileDto,
+) {
+  console.log('Update profile endpoint hit:', user, updateProfileDto);
+  // Change user.sub to user.id since the user object has 'id' property
+  return this.authService.updateProfile(user.id, updateProfileDto);
+}
+
+// Add this to your AuthController
+
+@UseGuards(JwtAuthGuard)
+@Post('change-password')
+async changePassword(
+  @CurrentUser() user: any,
+  @Body() changePasswordDto: { currentPassword: string; newPassword: string },
+) {
+  return this.authService.changePassword(user.id, changePasswordDto);
+}
 
   @Post('request-reset')
   async requestReset(@Body('email') email: string) {

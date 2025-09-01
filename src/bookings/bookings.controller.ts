@@ -14,7 +14,8 @@ import {
   ParseUUIDPipe,
   ValidationPipe,
   UsePipes,
-  Request
+  Request,
+  BadRequestException
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -35,7 +36,8 @@ import {
   CheckOutDto,
   PaymentDto,
   ExtendBookingDto,
-  BookingReportFilterDto
+  BookingReportFilterDto,
+  VerifyPaymentDto
 } from './dto/booking.dto';
 import { Booking } from '../entities/booking.entity';
 import { Payment } from '../entities/payment.entity';
@@ -43,17 +45,56 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
+import { PaystackService } from 'src/paystack/paystack.service';
 
 @ApiTags('Bookings')
 @Controller('bookings')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class BookingsController {
-  constructor(private readonly bookingsService: BookingsService) {}
+  constructor(
+    private readonly bookingsService: BookingsService,
+    private readonly paystackService: PaystackService
+  ) {}
+
+  @Post('verify-payment')
+  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Verify Paystack payment before creating booking' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Payment verified successfully' 
+  })
+  @ApiResponse({ 
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Payment verification failed' 
+  })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async verifyPayment(@Body() verifyPaymentDto: VerifyPaymentDto) {
+    const verification = await this.bookingsService.verifyPayment(verifyPaymentDto);
+    return {
+      message: 'Payment verified successfully',
+      verification
+    };
+  }
+
+  @Get('booking-fee')
+  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get current booking fee amount' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Booking fee retrieved successfully' 
+  })
+  async getBookingFee() {
+    return {
+      bookingFee: this.bookingsService.getBookingFee(),
+      formattedFee: this.paystackService.formatAmount(this.bookingsService.getBookingFee()),
+      currency: 'GHS'
+    };
+  }
 
   @Post('create')
   @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Create a new booking' })
+  @ApiOperation({ summary: 'Create a new booking with verified payment' })
   @ApiResponse({ 
     status: HttpStatus.CREATED, 
     description: 'Booking created successfully',
@@ -61,7 +102,7 @@ export class BookingsController {
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
-    description: 'Invalid input data or room not available' 
+    description: 'Invalid input data, room not available, or payment not verified' 
   })
   @ApiResponse({ 
     status: HttpStatus.CONFLICT, 
@@ -71,6 +112,62 @@ export class BookingsController {
   async createBooking(@Body() createBookingDto: CreateBookingDto): Promise<Booking> {
     return await this.bookingsService.createBooking(createBookingDto);
   }
+
+  @Post('admin-create')
+@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@ApiOperation({ summary: 'Create a new booking with verified payment (Admin)' })
+@UsePipes(new ValidationPipe({ 
+  transform: true,
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  exceptionFactory: (errors) => {
+    console.log('❌ Validation failed:', JSON.stringify(errors, null, 2));
+    return new BadRequestException(errors);
+  }
+}))
+async createAdminBooking(
+  @Body() createBookingDto: CreateBookingDto,
+  @Request() req: any
+): Promise<any> {
+  
+  console.log('='.repeat(80));
+  console.log('📥 ADMIN BOOKING REQUEST RECEIVED');
+  console.log('='.repeat(80));
+  console.log('Timestamp:', new Date().toISOString());
+  console.log('User:', req.user?.id || 'Unknown');
+  console.log('Request body keys:', Object.keys(createBookingDto));
+  console.log('Full request body:', JSON.stringify(createBookingDto, null, 2));
+  console.log('='.repeat(80));
+
+  try {
+    console.log('🔄 Calling bookingsService.createAdminBooking...');
+    
+    const result = await this.bookingsService.createAdminBooking(createBookingDto);
+    
+    console.log('✅ SUCCESS - Booking created:', {
+      id: result.id,
+      status: result.status,
+      studentName: result.studentName,
+      totalAmount: result.totalAmount
+    });
+    
+    return {
+      success: true,
+      booking: result,
+      message: 'Booking created successfully'
+    };
+    
+  } catch (error) {
+    console.log('❌ ERROR in controller:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack?.split('\n').slice(0, 5).join('\n')
+    });
+    
+    // Re-throw the error to let NestJS handle the HTTP response
+    throw error;
+  }
+}
 
   @Get()
   @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
@@ -288,58 +385,58 @@ export class BookingsController {
   ): Promise<Booking> {
     return await this.bookingsService.checkOut(id, checkOutDto);
   }
-@Post(':id/payments')
-@Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
-@ApiOperation({ summary: 'Record a payment for booking' })
-@ApiParam({ name: 'id', description: 'Booking ID' })
-@ApiResponse({ 
-  status: HttpStatus.CREATED, 
-  description: 'Payment recorded successfully'
-})
-@ApiResponse({ 
-  status: HttpStatus.BAD_REQUEST, 
-  description: 'Invalid payment amount or booking cancelled' 
-})
-@UsePipes(new ValidationPipe({ transform: true }))
-async recordPayment(
-  @Param('id', ParseUUIDPipe) id: string,
-  @Body() paymentDto: PaymentDto,
-  @Request() req: any
-): Promise<{ payment: Payment; booking: Booking; message: string }> {
-  const receivedBy = req.user?.id;
-  const result = await this.bookingsService.recordPayment(id, paymentDto, receivedBy);
-  
-  return {
-    payment: result.payment,
-    booking: result.booking,
-    message: 'Payment recorded successfully'
-  };
-}
 
-  // @Patch(':id/extend')
-  // @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
-  // @ApiOperation({ summary: 'Extend booking checkout date' })
-  // @ApiParam({ name: 'id', description: 'Booking ID' })
-  // @ApiResponse({ 
-  //   status: HttpStatus.OK, 
-  //   description: 'Booking extended successfully',
-  //   type: Booking 
-  // })
-  // @ApiResponse({ 
-  //   status: HttpStatus.BAD_REQUEST, 
-  //   description: 'Only checked-in bookings can be extended' 
-  // })
-  // @ApiResponse({ 
-  //   status: HttpStatus.CONFLICT, 
-  //   description: 'Room already booked for extension period' 
-  // })
-  // @UsePipes(new ValidationPipe({ transform: true }))
-  // async extendBooking(
-  //   @Param('id', ParseUUIDPipe) id: string,
-  //   @Body() extendDto: ExtendBookingDto
-  // ): Promise<Booking> {
-  //   return await this.bookingsService.extendBooking(id, extendDto);
-  // }
+  @Post(':id/room-payments')
+  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Record room balance payment for booking' })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  @ApiResponse({ 
+    status: HttpStatus.CREATED, 
+    description: 'Room payment recorded successfully'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid payment amount or booking cancelled' 
+  })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async recordRoomPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() paymentDto: PaymentDto,
+    @Request() req: any
+  ): Promise<{ payment: Payment; booking: Booking; message: string }> {
+    const receivedBy = req.user?.id;
+    const result = await this.bookingsService.recordRoomPayment(id, paymentDto, receivedBy);
+    
+    return {
+      payment: result.payment,
+      booking: result.booking,
+      message: 'Room payment recorded successfully'
+    };
+  }
+
+  @Post(':id/payments')
+  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Record a payment for booking (legacy endpoint)' })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  @ApiResponse({ 
+    status: HttpStatus.CREATED, 
+    description: 'Payment recorded successfully'
+  })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async recordPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() paymentDto: PaymentDto,
+    @Request() req: any
+  ): Promise<{ payment: Payment; booking: Booking; message: string }> {
+    const receivedBy = req.user?.id;
+    const result = await this.bookingsService.recordPayment(id, paymentDto, receivedBy);
+    
+    return {
+      payment: result.payment,
+      booking: result.booking,
+      message: 'Payment recorded successfully'
+    };
+  }
 
   @Delete(':id')
   @Roles(UserRole.SUPER_ADMIN)
@@ -361,8 +458,6 @@ async recordPayment(
     await this.bookingsService.deleteBooking(id);
     return { message: 'Booking deleted successfully' };
   }
-
-  // Utility endpoints for booking management
 
   @Get('hostel/:hostelId/calendar')
   @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
@@ -404,7 +499,9 @@ async recordPayment(
         studentName: booking.studentName,
         roomNumber: booking.room?.roomNumber,
         status: booking.status,
-        checkOutDate: booking.checkOutDate
+        checkOutDate: booking.checkOutDate,
+        paymentStatus: booking.paymentStatus,
+        amountDue: booking.amountDue
       });
     });
 
@@ -462,6 +559,7 @@ async recordPayment(
       totalRooms: rooms.length,
       availableRooms: availableRooms.length,
       bookedRooms: bookedRoomIds.size,
+      bookingFee: this.bookingsService.getBookingFee(),
       rooms: availableRooms.map(room => ({
         id: room.id,
         roomNumber: room.roomNumber,
@@ -547,18 +645,74 @@ async recordPayment(
     return { message: 'Overdue bookings marked successfully' };
   }
 
-//   @Get('student/:studentId')
-// @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
-// @ApiOperation({ summary: 'Get bookings by student ID' })
-// @ApiParam({ name: 'studentId', description: 'Student ID' })
-// @ApiResponse({ 
-//   status: HttpStatus.OK, 
-//   description: 'Student bookings retrieved successfully',
-//   type: [Booking] 
-// })
-// async getBookingsByStudent(
-//   @Param('studentId') studentId: string // Removed ParseUUIDPipe
-// ): Promise<Booking[]> {
-//   return await this.bookingsService.getBookingsByStudent(studentId);
-// }
+  // Paystack webhook endpoint
+  @Post('webhook/paystack')
+  @ApiOperation({ summary: 'Handle Paystack webhook events' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Webhook processed successfully' 
+  })
+  async handlePaystackWebhook(
+    @Body() payload: any,
+    @Request() req: any
+  ) {
+    // Verify webhook signature (recommended for production)
+    // const signature = req.headers['x-paystack-signature'];
+    
+    const { event, data } = payload;
+
+    switch (event) {
+      case 'charge.success':
+        // Handle successful payment
+        console.log('Payment successful:', data);
+        // You might want to update booking status or send notifications
+        break;
+        
+      case 'charge.failed':
+        // Handle failed payment
+        console.log('Payment failed:', data);
+        break;
+        
+      default:
+        console.log('Unhandled webhook event:', event);
+    }
+
+    return { status: 'success' };
+  }
+
+  // Payment status check endpoint
+  @Get(':id/payment-status')
+  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Check payment status for a booking' })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Payment status retrieved successfully' 
+  })
+  async getPaymentStatus(@Param('id', ParseUUIDPipe) id: string) {
+    const booking = await this.bookingsService.getBookingById(id);
+    const payments = await this.bookingsService.getBookingPayments(id);
+    
+    const totalBookingCost = this.bookingsService.getTotalBookingCost(Number(booking.totalAmount));
+    
+    return {
+      bookingId: booking.id,
+      paymentStatus: booking.paymentStatus,
+      totalAmount: totalBookingCost,
+      roomAmount: Number(booking.totalAmount),
+      bookingFee: this.bookingsService.getBookingFee(),
+      amountPaid: Number(booking.amountPaid),
+      amountDue: Number(booking.amountDue),
+      payments: payments.map(payment => ({
+        id: payment.id,
+        amount: Number(payment.amount),
+        paymentMethod: payment.paymentMethod,
+        transactionRef: payment.transactionRef,
+        paymentDate: payment.paymentDate,
+        notes: payment.notes
+      })),
+      paymentProgress: booking.getPaymentProgress(),
+      isFullyPaid: booking.paymentStatus === 'paid' && booking.amountDue <= 0
+    };
+  }
 }

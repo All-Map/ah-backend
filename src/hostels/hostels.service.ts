@@ -22,58 +22,65 @@ export class HostelsService {
     return `POINT(${lng} ${lat})`;
   }
 
-  // New method: Verify hostel ownership
-  async verifyOwnership(hostelId: string, userId: string): Promise<void> {
-    try {
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .select('admin_id')
-        .eq('id', hostelId)
-        .single();
+async verifyOwnership(hostelId: string, userId: string): Promise<void> {
+  try {
+    console.log(`Verifying ownership: hostel ${hostelId} for user ${userId}`);
+    
+    const { data, error } = await this.supabase.client
+      .from('hostels')
+      .select('admin_id, name')
+      .eq('id', hostelId)
+      .single();
 
-      if (error) {
-        console.error('Supabase verifyOwnership error:', error);
-        throw new NotFoundException('Hostel not found');
-      }
-
-      if (data.admin_id !== userId) {
-        throw new ForbiddenException('You do not have permission to access this hostel');
-      }
-    } catch (error) {
-      console.error('Error in verifyOwnership method:', error);
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
-        throw error;
-      }
-      throw new BadRequestException(`Failed to verify ownership: ${error.message}`);
+    if (error) {
+      console.error('Supabase verifyOwnership error:', error);
+      throw new NotFoundException('Hostel not found');
     }
-  }
 
-  // New method: Find hostels by admin ID
-  async findByAdminId(adminId: string) {
-    try {
-      console.log('Fetching hostels for admin ID:', adminId);
-      
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .select('*')
-        .eq('admin_id', adminId)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Supabase findByAdminId error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
-      }
-      
-      console.log(`Found ${data?.length || 0} hostels for admin ${adminId}`);
-      return data || [];
-    } catch (error) {
-      console.error('Error in findByAdminId method:', error);
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new BadRequestException(`Failed to fetch hostels: ${error.message}`);
+    if (data.admin_id !== userId) {
+      console.warn(`Access denied: user ${userId} tried to access hostel owned by ${data.admin_id}`);
+      throw new ForbiddenException('You do not have permission to access this hostel');
     }
+    
+    console.log(`Ownership verified: ${data.name} belongs to user ${userId}`);
+  } catch (error) {
+    console.error('Error in verifyOwnership method:', error);
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    throw new BadRequestException(`Failed to verify ownership: ${error.message}`);
   }
+}
+
+async findByAdminId(adminId: string) {
+  try {
+    console.log('Fetching hostels for admin ID:', adminId);
+    
+    if (!adminId) {
+      throw new BadRequestException('Admin ID is required');
+    }
+    
+    const { data, error } = await this.supabase.client
+      .from('hostels')
+      .select('*')
+      .eq('admin_id', adminId)  // This ensures only user's hostels are returned
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase findByAdminId error:', error);
+      throw new BadRequestException(`Database error: ${error.message}`);
+    }
+    
+    console.log(`Found ${data?.length || 0} hostels for admin ${adminId}`);
+    return data || [];
+  } catch (error) {
+    console.error('Error in findByAdminId method:', error);
+    if (error instanceof BadRequestException) {
+      throw error;
+    }
+    throw new BadRequestException(`Failed to fetch hostels: ${error.message}`);
+  }
+}
 
   // New method: Find one hostel by ID and admin ID
   async findOneByAdminId(hostelId: string, adminId: string) {

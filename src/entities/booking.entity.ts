@@ -86,6 +86,22 @@ export class Booking {
   @Column('date', { nullable: true, name: 'payment_due_date' })
   paymentDueDate: Date;
 
+  // New payment tracking fields
+  @Column('decimal', { precision: 10, scale: 2, default: 70, name: 'booking_fee', transformer: {
+    to: (value: number) => value,
+    from: (value: string) => parseFloat(value)
+  }})
+  bookingFee: number;
+
+  @Column('boolean', { default: false, name: 'booking_fee_paid' })
+  bookingFeePaid: boolean;
+
+  @Column({ nullable: true, name: 'payment_reference' })
+  paymentReference: string;
+
+  @Column('timestamptz', { nullable: true, name: 'booking_fee_paid_at' })
+  bookingFeePaidAt: Date;
+
   @Column('text', { nullable: true, name: 'special_requests' })
   specialRequests: string;
 
@@ -126,14 +142,14 @@ export class Booking {
   @JoinColumn({ name: 'hostel_id' })
   hostel: Hostel;
 
-    @OneToMany(() => Payment, payment => payment.booking)
+  @OneToMany(() => Payment, payment => payment.booking)
   payments: Payment[];
 
   @ManyToOne(() => Room)
   @JoinColumn({ name: 'room_id' })
   room: Room;
 
- @BeforeInsert()
+  @BeforeInsert()
   @BeforeUpdate()
   updateTimestamp() {
     this.updatedAt = new Date();
@@ -163,7 +179,8 @@ export class Booking {
 
   canCheckIn(): boolean {
     return this.status === BookingStatus.CONFIRMED && 
-           new Date() >= new Date(this.checkInDate);
+           new Date() >= new Date(this.checkInDate) &&
+           this.paymentStatus === PaymentStatus.PAID;
   }
 
   canCheckOut(): boolean {
@@ -175,6 +192,43 @@ export class Booking {
   }
 
   getPaymentProgress(): number {
-    return this.totalAmount > 0 ? (this.amountPaid / this.totalAmount) * 100 : 0;
+    // Calculate progress including booking fee
+    const totalCost = this.totalAmount + this.bookingFee;
+    return totalCost > 0 ? (this.amountPaid / totalCost) * 100 : 0;
+  }
+
+  // Get total cost including booking fee
+  getTotalCost(): number {
+    return this.totalAmount + this.bookingFee;
+  }
+
+  // Check if booking fee is paid
+  isBookingFeePaid(): boolean {
+    return this.bookingFeePaid && typeof this.paymentReference === 'string' && this.paymentReference.length > 0;
+  }
+
+  // Check if room payment is complete
+  isRoomPaymentComplete(): boolean {
+    return this.amountDue <= 0;
+  }
+
+  // Check if full payment is complete
+  isFullyPaid(): boolean {
+    return this.isBookingFeePaid() && this.isRoomPaymentComplete();
+  }
+
+  // Get payment summary
+  getPaymentSummary() {
+    return {
+      totalCost: this.getTotalCost(),
+      bookingFee: this.bookingFee,
+      roomAmount: this.totalAmount,
+      amountPaid: this.amountPaid,
+      amountDue: this.amountDue,
+      bookingFeePaid: this.bookingFeePaid,
+      roomPaymentComplete: this.isRoomPaymentComplete(),
+      fullyPaid: this.isFullyPaid(),
+      paymentProgress: this.getPaymentProgress()
+    };
   }
 }

@@ -1,5 +1,5 @@
 // booking.dto.ts
-import { IsUUID, IsString, IsEmail, IsPhoneNumber, IsEnum, IsDateString, IsNumber, IsOptional, IsArray, ValidateNested, Min, Max } from 'class-validator';
+import { IsUUID, IsString, IsEmail, IsPhoneNumber, IsEnum, IsDateString, IsNumber, IsOptional, IsArray, ValidateNested, Min, Max, IsBoolean } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingStatus, BookingType, PaymentStatus } from 'src/entities/booking.entity';
@@ -76,6 +76,33 @@ export class CreateBookingDto {
   @ValidateNested({ each: true })
   @Type(() => EmergencyContactDto)
   emergencyContacts?: EmergencyContactDto[];
+
+  // New payment-related fields
+  @ApiProperty({ description: 'Paystack payment reference' })
+  @IsString()
+  paymentReference: string;
+
+  @ApiProperty({ description: 'Booking fee amount paid (should be 70 GHS)' })
+  @IsNumber()
+  @Min(70)
+  @Max(70)
+  bookingFeeAmount: number;
+
+  @ApiPropertyOptional({ description: 'Payment verification status', default: false })
+  @IsOptional()
+  @IsBoolean()
+  paymentVerified?: boolean;
+}
+
+export class VerifyPaymentDto {
+  @ApiProperty({ description: 'Paystack payment reference' })
+  @IsString()
+  reference: string;
+
+  @ApiProperty({ description: 'Expected amount in GHS' })
+  @IsNumber()
+  @Min(0.01)
+  expectedAmount: number;
 }
 
 export class UpdateBookingDto {
@@ -192,6 +219,11 @@ export class BookingFilterDto {
   @IsOptional()
   @IsString()
   sortOrder?: 'ASC' | 'DESC';
+
+  @ApiPropertyOptional({ description: 'exclude cancelled bookings', default: false })
+  @IsOptional()
+  @IsArray()
+  excludeStatuses?: string[];
 }
 
 export class ConfirmBookingDto {

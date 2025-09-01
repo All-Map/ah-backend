@@ -420,6 +420,50 @@ async login(user: User, inputPassword: string) {
   };
 }
 
+// Add this method to your AuthService class
+
+async changePassword(
+  userId: string, 
+  changePasswordDto: { currentPassword: string; newPassword: string }
+): Promise<{ message: string }> {
+  // Get the current user
+  const { data: user, error: userError } = await this.supabase.client
+    .from('users')
+    .select('id, password_hash')
+    .eq('id', userId)
+    .single();
+
+  if (userError || !user) {
+    throw new NotFoundException('User not found');
+  }
+
+  // Verify current password
+  const isCurrentPasswordValid = await bcrypt.compare(
+    changePasswordDto.currentPassword, 
+    user.password_hash
+  );
+
+  if (!isCurrentPasswordValid) {
+    throw new BadRequestException('Current password is incorrect');
+  }
+
+  // Hash new password
+  const hashedNewPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
+
+  // Update password in database
+  const { error: updateError } = await this.supabase.client
+    .from('users')
+    .update({ password_hash: hashedNewPassword })
+    .eq('id', userId);
+
+  if (updateError) {
+    console.error('Password update error:', updateError);
+    throw new InternalServerErrorException('Failed to change password');
+  }
+
+  return { message: 'Password changed successfully' };
+}
+
   async requestPasswordReset(email: string) {
     const user = await this.findUserByEmail(email);
     if (!user) return; // Don't reveal if user exists

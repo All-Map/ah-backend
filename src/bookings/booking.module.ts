@@ -13,6 +13,7 @@ import { User } from 'src/entities/user.entity';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { JwtService } from '@nestjs/jwt';
 import { MailService } from 'src/mail/mail.service';
+import { PaystackService } from 'src/paystack/paystack.service';
 
 @Module({
   imports: [
@@ -26,7 +27,7 @@ import { MailService } from 'src/mail/mail.service';
     ])
   ],
   controllers: [BookingsController],
-  providers: [BookingsService, AuthService, SupabaseService, JwtService, MailService],
+  providers: [BookingsService, AuthService, SupabaseService, JwtService, MailService, PaystackService],
   exports: [BookingsService]
 })
 export class BookingsModule {}

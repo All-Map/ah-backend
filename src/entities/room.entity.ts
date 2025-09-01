@@ -67,10 +67,9 @@ status: string;
     this.updatedAt = new Date();
   }
 
-  // Helper methods
   isAvailable(): boolean {
-    return this.status === RoomStatus.AVAILABLE && this.currentOccupancy < this.maxOccupancy;
-  }
+  return this.status === RoomStatus.AVAILABLE && this.currentOccupancy < this.maxOccupancy;
+}
 
   hasSpace(): boolean {
     return this.currentOccupancy < this.maxOccupancy;
