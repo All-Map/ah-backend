@@ -218,89 +218,61 @@ const userData = {
   return safeUser;
 }
 
-async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User> }> {
-  console.log('=== EMAIL VERIFICATION DEBUG ===');
-  console.log('Received token:', token);
-  console.log('Token length:', token.length);
+  async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User> }> {
+    if (!token || token.length !== 64) {
+      throw new BadRequestException('Invalid verification token format');
+    }
 
-  if (!token || token.length !== 64) {
-    console.log('Invalid token format');
-    throw new BadRequestException('Invalid verification token format');
+    const { data: tokenCheck, error: tokenCheckError } = await this.supabase
+      .client
+      .from('user')
+      .select('id, email, verification_token, verification_token_expires_at, is_verified')
+      .eq('verification_token', token)
+      .single();
+
+    if (tokenCheckError && tokenCheckError.code !== 'PGRST116') {
+      throw new InternalServerErrorException('Database error during verification');
+    }
+
+    if (!tokenCheck) {
+      throw new BadRequestException('Invalid verification token');
+    }
+
+    if (tokenCheck.is_verified) {
+      throw new BadRequestException('Email is already verified');
+    }
+
+    // Check expiry
+    const now = new Date();
+    const expiryDate = new Date(tokenCheck.verification_token_expires_at);
+
+    if (now > expiryDate) {
+      throw new BadRequestException('Verification token has expired. Please request a new verification email.');
+    }
+
+    // Update user
+    const { data: updatedUser, error: updateError } = await this.supabase
+      .client
+      .from('user')
+      .update({ 
+        is_verified: true, 
+        verification_token: null,
+        verification_token_expires_at: null,
+        verified_at: new Date().toISOString()
+      })
+      .eq('id', tokenCheck.id)
+      .select('id, email, is_verified, verified_at')
+      .single();
+
+    if (updateError) {
+      throw new InternalServerErrorException('Failed to verify email');
+    }
+
+    return {
+      message: 'Email verified successfully',
+      user: updatedUser
+    };
   }
-
-  // First, let's check if the token exists at all (ignoring expiry for debugging)
-  const { data: tokenCheck, error: tokenCheckError } = await this.supabase
-    .client
-    .from('users')
-    .select('id, email, verification_token, verification_token_expires_at, is_verified')
-    .eq('verification_token', token)
-    .single();
-
-  console.log('Token check result:', tokenCheck);
-  console.log('Token check error:', tokenCheckError);
-
-  if (tokenCheckError && tokenCheckError.code !== 'PGRST116') {
-    console.error('Database error during token check:', tokenCheckError);
-    throw new InternalServerErrorException('Database error during verification');
-  }
-
-  if (!tokenCheck) {
-    console.log('Token not found in database');
-    throw new BadRequestException('Invalid verification token');
-  }
-
-  // Check if already verified
-  if (tokenCheck.is_verified) {
-    console.log('User already verified');
-    throw new BadRequestException('Email is already verified');
-  }
-
-  // Check expiry
-  const now = new Date();
-  const expiryDate = new Date(tokenCheck.verification_token_expires_at);
-  console.log('Current time:', now.toISOString());
-  console.log('Token expiry:', expiryDate.toISOString());
-  console.log('Token expired?', now > expiryDate);
-
-  if (now > expiryDate) {
-    console.log('Token has expired');
-    throw new BadRequestException('Verification token has expired. Please request a new verification email.');
-  }
-
-  // Now update the user
-  console.log('Updating user with ID:', tokenCheck.id);
-  const { data: updatedUser, error: updateError } = await this.supabase
-    .client
-    .from('users')
-    .update({ 
-      is_verified: true, 
-      verification_token: null,
-      verification_token_expires_at: null,
-      verified_at: new Date().toISOString()
-    })
-    .eq('id', tokenCheck.id)
-    .select('id, email, is_verified, verified_at')
-    .single();
-
-  console.log('Update result:', updatedUser);
-  console.log('Update error:', updateError);
-
-  if (updateError) {
-    console.error('Failed to update user:', updateError);
-    throw new InternalServerErrorException('Failed to verify email');
-  }
-
-  if (!updatedUser) {
-    console.error('Update returned no data');
-    throw new InternalServerErrorException('Verification update failed');
-  }
-
-  console.log('=== VERIFICATION SUCCESSFUL ===');
-  return {
-    message: 'Email verified successfully',
-    user: updatedUser
-  };
-}
 
 // Replace your resendVerificationEmail method with this enhanced debug version
 

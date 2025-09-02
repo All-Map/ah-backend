@@ -83,9 +83,9 @@ async resetPassword(@Body() dto: ResetPasswordDto) {
 
     @Get('verify-email/:token')
     async verifyEmail(@Param('token') token: string) {
-      const result = await this.authService.verifyEmail(token);
-      return result; // Return JSON, not a redirect
-    }
+    const result = await this.authService.verifyEmail(token);
+    return result;
+  }
 
   @Post('resend-verification')
   async resendVerificationEmail(@Body() { email }: { email: string }) {
