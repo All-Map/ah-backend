@@ -219,62 +219,61 @@ const userData = {
 }
 
   async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User> }> {
-    if (!token || token.length !== 64) {
-      throw new BadRequestException('Invalid verification token format');
-    }
-
-    const { data: tokenCheck, error: tokenCheckError } = await this.supabase
-      .client
-      .from('user')
-      .select('id, email, verification_token, verification_token_expires_at, is_verified')
-      .eq('verification_token', token)
-      .single();
-
-    if (tokenCheckError && tokenCheckError.code !== 'PGRST116') {
-      throw new InternalServerErrorException('Database error during verification');
-    }
-
-    if (!tokenCheck) {
-      throw new BadRequestException('Invalid verification token');
-    }
-
-    if (tokenCheck.is_verified) {
-      throw new BadRequestException('Email is already verified');
-    }
-
-    // Check expiry
-    const now = new Date();
-    const expiryDate = new Date(tokenCheck.verification_token_expires_at);
-
-    if (now > expiryDate) {
-      throw new BadRequestException('Verification token has expired. Please request a new verification email.');
-    }
-
-    // Update user
-    const { data: updatedUser, error: updateError } = await this.supabase
-      .client
-      .from('user')
-      .update({ 
-        is_verified: true, 
-        verification_token: null,
-        verification_token_expires_at: null,
-        verified_at: new Date().toISOString()
-      })
-      .eq('id', tokenCheck.id)
-      .select('id, email, is_verified, verified_at')
-      .single();
-
-    if (updateError) {
-      throw new InternalServerErrorException('Failed to verify email');
-    }
-
-    return {
-      message: 'Email verified successfully',
-      user: updatedUser
-    };
+  if (!token || token.length !== 64) {
+    throw new BadRequestException('Invalid verification token format');
   }
 
-// Replace your resendVerificationEmail method with this enhanced debug version
+  const { data: tokenCheck, error: tokenCheckError } = await this.supabase
+    .client
+    .from('users') // ✅ Fixed: changed from 'user' to 'users'
+    .select('id, email, verification_token, verification_token_expires_at, is_verified')
+    .eq('verification_token', token)
+    .single();
+
+  if (tokenCheckError && tokenCheckError.code !== 'PGRST116') {
+    throw new InternalServerErrorException('Database error during verification');
+  }
+
+  if (!tokenCheck) {
+    throw new BadRequestException('Invalid verification token');
+  }
+
+  if (tokenCheck.is_verified) {
+    throw new BadRequestException('Email is already verified');
+  }
+
+  // Check expiry
+  const now = new Date();
+  const expiryDate = new Date(tokenCheck.verification_token_expires_at);
+
+  if (now > expiryDate) {
+    throw new BadRequestException('Verification token has expired. Please request a new verification email.');
+  }
+
+  // Update user
+  const { data: updatedUser, error: updateError } = await this.supabase
+    .client
+    .from('users') // ✅ Fixed: changed from 'user' to 'users'
+    .update({ 
+      is_verified: true, 
+      verification_token: null,
+      verification_token_expires_at: null,
+      verified_at: new Date().toISOString()
+    })
+    .eq('id', tokenCheck.id)
+    .select('id, email, is_verified, verified_at')
+    .single();
+
+  if (updateError) {
+    throw new InternalServerErrorException('Failed to verify email');
+  }
+
+  return {
+    message: 'Email verified successfully',
+    user: updatedUser
+  };
+}
+
 
 async resendVerificationEmail(email: string): Promise<{ message: string }> {
   console.log('=== RESEND VERIFICATION DEBUG ===');
