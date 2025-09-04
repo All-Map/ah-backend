@@ -25,7 +25,7 @@ import { PaystackService } from 'src/paystack/paystack.service';
 
 @Injectable()
 export class BookingsService {
-  private readonly BOOKING_FEE = 70; // 70 GHS booking fee
+  private readonly BOOKING_FEE = 70; 
 
   constructor(
     @InjectRepository(Booking)
@@ -44,9 +44,6 @@ export class BookingsService {
     private readonly paystackService: PaystackService,
   ) {}
 
-  /**
-   * Verify Paystack payment before creating booking
-   */
   async verifyPayment(verifyPaymentDto: VerifyPaymentDto): Promise<any> {
     const { reference, expectedAmount } = verifyPaymentDto;
 
@@ -500,86 +497,92 @@ export class BookingsService {
   }
 
   // Get bookings with filtering and pagination
-  async getBookings(filterDto: BookingFilterDto) {
-    const {
-      hostelId,
-      roomId,
-      studentId,
-      status,
-      bookingType,
-      paymentStatus,
+  // Backend Fix (bookings.service.ts) - Updated getBookings method
+
+async getBookings(filterDto: BookingFilterDto) {
+  const {
+    hostelId,
+    roomId,
+    studentId,
+    status,
+    bookingType,
+    paymentStatus,
+    checkInFrom,
+    checkInTo,
+    search,
+    page = 1,
+    limit = 10,
+    sortBy = 'createdAt',
+    sortOrder = 'DESC',
+    excludeStatuses = []
+  } = filterDto;
+
+  const queryBuilder = this.bookingRepository
+    .createQueryBuilder('booking')
+    .leftJoinAndSelect('booking.hostel', 'hostel')
+    .leftJoinAndSelect('booking.room', 'room')
+    .leftJoinAndSelect('room.roomType', 'roomType');
+
+  // Apply filters
+  if (hostelId) {
+    queryBuilder.andWhere('booking.hostelId = :hostelId', { hostelId });
+  }
+
+  if (roomId) {
+    queryBuilder.andWhere('booking.roomId = :roomId', { roomId });
+  }
+
+  if (studentId) {
+    queryBuilder.andWhere('booking.studentId = :studentId', { studentId });
+  }
+
+  // Fixed: Handle status filtering correctly
+  if (status) {
+    const statuses = Array.isArray(status) ? status : [status];
+    queryBuilder.andWhere('booking.status IN (:...statuses)', { statuses });
+  }
+
+  // Handle excludeStatuses (useful for filtering out active bookings)
+  if (excludeStatuses && excludeStatuses.length > 0) {
+    queryBuilder.andWhere('booking.status NOT IN (:...excludeStatuses)', {
+      excludeStatuses
+    });
+  }
+
+  if (bookingType) {
+    queryBuilder.andWhere('booking.bookingType = :bookingType', { bookingType });
+  }
+
+  if (paymentStatus) {
+    queryBuilder.andWhere('booking.paymentStatus = :paymentStatus', { paymentStatus });
+  }
+
+  if (checkInFrom && checkInTo) {
+    queryBuilder.andWhere('booking.checkInDate BETWEEN :checkInFrom AND :checkInTo', {
       checkInFrom,
-      checkInTo,
-      search,
-      page = 1,
-      limit = 10,
-      sortBy = 'createdAt',
-      sortOrder = 'DESC',
-      excludeStatuses = []
-    } = filterDto;
+      checkInTo
+    });
+  } else if (checkInFrom) {
+    queryBuilder.andWhere('booking.checkInDate >= :checkInFrom', { checkInFrom });
+  } else if (checkInTo) {
+    queryBuilder.andWhere('booking.checkInDate <= :checkInTo', { checkInTo });
+  }
 
-    const queryBuilder = this.bookingRepository
-      .createQueryBuilder('booking')
-      .leftJoinAndSelect('booking.hostel', 'hostel')
-      .leftJoinAndSelect('booking.room', 'room')
-      .leftJoinAndSelect('room.roomType', 'roomType');
+  if (search) {
+    queryBuilder.andWhere(
+      '(booking.studentName ILIKE :search OR booking.studentEmail ILIKE :search OR booking.studentPhone ILIKE :search OR room.roomNumber ILIKE :search OR hostel.name ILIKE :search)',
+      { search: `%${search}%` }
+    );
+  }
 
-    // Apply filters
-    if (hostelId) {
-      queryBuilder.andWhere('booking.hostelId = :hostelId', { hostelId });
-    }
+  // Apply sorting
+  queryBuilder.orderBy(`booking.${sortBy}`, sortOrder);
 
-    if (roomId) {
-      queryBuilder.andWhere('booking.roomId = :roomId', { roomId });
-    }
+  // Apply pagination
+  const offset = (page - 1) * limit;
+  queryBuilder.skip(offset).take(limit);
 
-    if (studentId) {
-      queryBuilder.andWhere('booking.studentId = :studentId', { studentId });
-    }
-
-    if (status) {
-      queryBuilder.andWhere('booking.status = :status', { status });
-    }
-
-    if (bookingType) {
-      queryBuilder.andWhere('booking.bookingType = :bookingType', { bookingType });
-    }
-
-    if (paymentStatus) {
-      queryBuilder.andWhere('booking.paymentStatus = :paymentStatus', { paymentStatus });
-    }
-
-    if (filterDto.excludeStatuses) {
-      queryBuilder.andWhere('booking.status NOT IN (:...excludeStatuses)', {
-        excludeStatuses: filterDto.excludeStatuses
-      });
-    }
-
-    if (checkInFrom && checkInTo) {
-      queryBuilder.andWhere('booking.checkInDate BETWEEN :checkInFrom AND :checkInTo', {
-        checkInFrom,
-        checkInTo
-      });
-    } else if (checkInFrom) {
-      queryBuilder.andWhere('booking.checkInDate >= :checkInFrom', { checkInFrom });
-    } else if (checkInTo) {
-      queryBuilder.andWhere('booking.checkInDate <= :checkInTo', { checkInTo });
-    }
-
-    if (search) {
-      queryBuilder.andWhere(
-        '(booking.studentName ILIKE :search OR booking.studentEmail ILIKE :search OR booking.studentPhone ILIKE :search OR room.roomNumber ILIKE :search OR hostel.name ILIKE :search)',
-        { search: `%${search}%` }
-      );
-    }
-
-    // Apply sorting
-    queryBuilder.orderBy(`booking.${sortBy}`, sortOrder);
-
-    // Apply pagination
-    const offset = (page - 1) * limit;
-    queryBuilder.skip(offset).take(limit);
-
+  try {
     const [bookings, total] = await queryBuilder.getManyAndCount();
 
     return {
@@ -591,7 +594,11 @@ export class BookingsService {
         totalPages: Math.ceil(total / limit)
       }
     };
+  } catch (error) {
+    console.error('Error in getBookings:', error);
+    throw new Error(`Failed to fetch bookings: ${error.message}`);
   }
+}
 
   async getBookingById(id: string): Promise<Booking> {
     const booking = await this.bookingRepository

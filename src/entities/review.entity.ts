@@ -46,7 +46,7 @@ export class Review {
   };
 
   // Review metadata
-  @Column('enum', { enum: ReviewStatus, default: ReviewStatus.PENDING })
+  @Column('enum', { enum: ReviewStatus, default: ReviewStatus.APPROVED })
   status: ReviewStatus;
 
   @Column('jsonb', { default: [], name: 'helpful_votes' })

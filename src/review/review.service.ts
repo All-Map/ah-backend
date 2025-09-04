@@ -142,7 +142,7 @@ export class ReviewsService {
       reviewText,
       detailedRatings: detailedRatings || {},
       images: images || [],
-      status: ReviewStatus.PENDING // Reviews need approval by default
+      status: ReviewStatus.APPROVED // Reviews need approval by default
     });
 
     const savedReview = await this.reviewRepository.save(review);

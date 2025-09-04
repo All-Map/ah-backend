@@ -12,12 +12,11 @@ import { CloudinaryService } from "src/cloudinary/cloudinary.service";
 import { RoomsService } from "src/rooms/rooms.service";
 import { RoomType } from "src/entities/room-type.entity";
 import { Room } from "src/entities/room.entity";
-import { School } from "src/entities/school.entity";
 
 @Module({
   imports: [
     SupabaseModule,
-    TypeOrmModule.forFeature([Review, Booking, Hostel, User, RoomType, Room, School])
+    TypeOrmModule.forFeature([Review, Booking, Hostel, User, RoomType, Room])
   ],
   controllers: [ReviewsController],
   providers: [ReviewsService, HostelsService, CloudinaryService, RoomsService],
