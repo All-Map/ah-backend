@@ -35,6 +35,21 @@ export class AdminVerificationService {
     return verification;
   }
 
+async getVerifications(status?: string): Promise<AdminVerification[]> {
+  let query = this.supabase.client
+    .from('admin_verifications')
+    .select('*, user:user_id (id, email, name, phone, school_id)');
+
+  if (status && status !== 'all') {
+    query = query.eq('status', status);
+  }
+
+  const { data, error } = await query;
+
+  if (error) throw new Error('Failed to fetch verifications');
+  return data;
+}
+
   async getPendingVerifications(): Promise<AdminVerification[]> {
     const { data, error } = await this.supabase.client
       .from('admin_verifications')
@@ -106,8 +121,8 @@ export class AdminVerificationService {
 
     return data;
   }
-  
-async getUserVerificationStatus(userId: string): Promise<AdminVerification | null> {
+
+  async getUserVerificationStatus(userId: string): Promise<AdminVerification | null> {
   const { data, error } = await this.supabase.client
     .from('admin_verifications')
     .select('*')

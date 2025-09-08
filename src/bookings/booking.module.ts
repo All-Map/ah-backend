@@ -14,6 +14,7 @@ import { SupabaseService } from 'src/supabase/supabase.service';
 import { JwtService } from '@nestjs/jwt';
 import { MailService } from 'src/mail/mail.service';
 import { PaystackService } from 'src/paystack/paystack.service';
+import { School } from 'src/entities/school.entity';
 
 @Module({
   imports: [
@@ -23,7 +24,8 @@ import { PaystackService } from 'src/paystack/paystack.service';
       Room,
       Hostel,
       RoomType,
-      User
+      User,
+      School
     ])
   ],
   controllers: [BookingsController],

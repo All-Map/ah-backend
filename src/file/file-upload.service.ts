@@ -22,6 +22,12 @@ import { SupabaseService } from '../supabase/supabase.service';
 @Injectable()
 export class FileUploadService {
   private readonly logger = new Logger(FileUploadService.name);
+    private sanitizeFilename(filename: string): string {
+    return filename
+      .normalize('NFKD') // normalize Unicode
+      .replace(/[\u0300-\u036f]/g, '') // strip accents
+      .replace(/[^a-zA-Z0-9._-]/g, '_'); // replace invalid chars with "_"
+  }
 
   constructor(private readonly supabase: SupabaseService) {}
 
@@ -38,7 +44,8 @@ getPublicUrl(bucketName: string, filePath: string): string {
 async uploadFile(bucketName: string, file: import('multer').File): Promise<string> {
   try {
     await this.ensureBucketExists(bucketName);
-    const fileName = `${Date.now()}-${file.originalname}`;
+    const safeName = this.sanitizeFilename(file.originalname);
+    const fileName = `${Date.now()}-${safeName}`
     const filePath = `uploads/${fileName}`;
 
     const { error } = await this.supabase.client
