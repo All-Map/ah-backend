@@ -54,6 +54,12 @@ export class User {
   })
   role: string;
 
+  @Column({ default: false })
+  terms_accepted: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  terms_accepted_at: Date;
+
   @Column({ nullable: true })
   school_id: string;
 

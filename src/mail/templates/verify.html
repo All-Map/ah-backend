@@ -1,9 +1,40 @@
 <!DOCTYPE html>
 <html>
-  <head><title>Verify Email</title></head>
-  <body>
-    <p>Hello,</p>
-    <p>Please verify your email by clicking the link below:</p>
-    <a href="{{verificationUrl}}">Verify Email</a>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <title>Verify Your Email - Allmap Hostels</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #2563eb; color: white; padding: 20px; text-align: center; }
+    .content { background: #f9fafb; padding: 30px; }
+    .button { background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; }
+    .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Welcome to Allmap Hostels!</h1>
+    </div>
+    <div class="content">
+      <h2>Verify Your Email Address</h2>
+      <p>Hello,</p>
+      <p>Thank you for signing up with Allmap Hostels. To complete your registration and start managing your hostel experience, please verify your email address by clicking the button below:</p>
+      
+      <p style="text-align: center;">
+        <a href="{{verificationUrl}}" class="button" style="color: #fff;">Verify Email Address</a>
+      </p>
+      
+      <p>If the button doesn't work, you can also copy and paste this link into your browser:</p>
+      <p style="word-break: break-all; color: #2563eb;">{{verificationUrl}}</p>
+      
+      <p>This verification link will expire in 24 hours.</p>
+      <p>If you didn't create an account with Allmap Hostels, please ignore this email.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; 2024 Allmap Hostels. All rights reserved.</p>
+    </div>
+  </div>
+</body>
 </html>

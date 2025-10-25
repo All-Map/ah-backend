@@ -18,6 +18,8 @@ export interface UserDetails {
   is_verified: boolean;
   role: string;
   school_id: string;
+  terms_accepted: boolean;
+  terms_accepted_at?: string;
   school?: {
     id: string;
     name: string;
@@ -49,229 +51,294 @@ export class AuthService {
   }
 
 async register(registerDto: RegisterDto): Promise<User> {
-  // Verify school domain
-  // const domain = registerDto.email.split('@')[1];
-  // const { data: school, error: schoolError } = await this.supabase
-  //   .client
-  //   .from('schools')
-  //   .select('id')
-  //   .eq('domain', domain)
-  //   .single();
-  
-  // if (schoolError || !school) {
-  //   throw new BadRequestException('Invalid school email domain');
-  // }
+    try {
+      // Check if terms are accepted
+      if (!registerDto.terms_accepted) {
+        throw new BadRequestException('You must accept the terms and conditions');
+      }
 
-  // Check if user already exists
-  const { data: existingUser } = await this.supabase
-    .client
-    .from('users')
-    .select('id, is_verified')
-    .eq('email', registerDto.email)
-    .single();
+      // Check if user already exists
+      const { data: existingUser } = await this.supabase
+        .client
+        .from('users')
+        .select('id, is_verified')
+        .eq('email', registerDto.email)
+        .single();
 
-  if (existingUser?.is_verified) {
-    throw new ConflictException('User already exists');
-  }
-
-  const verificationToken = crypto.randomBytes(32).toString('hex');
-  const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-
-const hashedPassword = await bcrypt.hash(registerDto.password_hash, 10);
-
-const userData = {
-  ...registerDto,
-  password_hash: hashedPassword,
-  // school_id: school.id,
-  verification_token: verificationToken,
-  verification_token_expires_at: tokenExpiry.toISOString(),
-  is_verified: false
-};
-
-  let user;
-  if (existingUser && !existingUser.is_verified) {
-    const { data, error } = await this.supabase
-      .client
-      .from('users')
-      .update(userData)
-      .eq('email', registerDto.email)
-      .select('*')
-      .single();
-
-    if (error) throw new InternalServerErrorException(error.message || 'Failed to update user');
-    user = data;
-  } else {
-    const { data, error } = await this.supabase
-      .client
-      .from('users')
-      .insert([userData])
-      .select('*')
-      .single();
-    
-    if (error) {
-      console.error('Supabase error:', error);
-      if (error.code === '23505') {
+      if (existingUser?.is_verified) {
         throw new ConflictException('User already exists');
       }
-      throw new InternalServerErrorException(error.message || 'Failed to create user');
+
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+      const hashedPassword = await bcrypt.hash(registerDto.password_hash, 10);
+
+      const userData = {
+        ...registerDto,
+        password_hash: hashedPassword,
+        verification_token: verificationToken,
+        verification_token_expires_at: tokenExpiry.toISOString(),
+        is_verified: false,
+        terms_accepted: registerDto.terms_accepted,
+        terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
+      };
+
+      let user;
+      if (existingUser && !existingUser.is_verified) {
+        const { data, error } = await this.supabase
+          .client
+          .from('users')
+          .update(userData)
+          .eq('email', registerDto.email)
+          .select('*')
+          .single();
+
+        if (error) throw new InternalServerErrorException(error.message || 'Failed to update user');
+        user = data;
+      } else {
+        const { data, error } = await this.supabase
+          .client
+          .from('users')
+          .insert([userData])
+          .select('*')
+          .single();
+        
+        if (error) {
+          console.error('Supabase error:', error);
+          if (error.code === '23505') {
+            throw new ConflictException('User already exists');
+          }
+          throw new InternalServerErrorException(error.message || 'Failed to create user');
+        }
+        user = data;
+      }
+
+      // Send verification email
+      try {
+        await this.mailService.sendAdminVerificationEmail(user.email, verificationToken);
+      } catch (error) {
+        console.error('Failed to send verification email:', error);
+        // Don't throw error here to avoid rolling back user creation
+      }
+
+      // Remove sensitive data from response
+      const { verification_token, verification_token_expires_at, password_hash, ...safeUser } = user;
+      return safeUser;
+    } catch (error) {
+      console.error('Registration error:', error);
+      throw error;
     }
-    user = data;
   }
 
-  // Send verification email
-  try {
-    // In your AuthService
-    await this.mailService.sendVerificationEmail(user.email, verificationToken);
-  } catch (error) {
-    console.error('Failed to send verification email:', error);
-    // Don't throw error here to avoid rolling back user creation
-  }
+  async registerStudent(registerDto: RegisterDto): Promise<User> {
+    try {
+      // Check if terms are accepted
+      if (!registerDto.terms_accepted) {
+        throw new BadRequestException('You must accept the terms and conditions');
+      }
 
-  // Remove sensitive data from response
-  const { verification_token, verification_token_expires_at, ...safeUser } = user;
-  return safeUser;
-}
+      // Verify school domain
+      const domain = registerDto.email.split('@')[1];
+      const { data: school, error: schoolError } = await this.supabase
+        .client
+        .from('schools')
+        .select('id')
+        .eq('domain', domain)
+        .single();
+      
+      if (schoolError || !school) {
+        throw new BadRequestException('Please register with a valid school email');
+      }
 
-async registerStudent(registerDto: RegisterDto): Promise<User> {
-  // Verify school domain
-  const domain = registerDto.email.split('@')[1];
-  const { data: school, error: schoolError } = await this.supabase
-    .client
-    .from('schools')
-    .select('id')
-    .eq('domain', domain)
-    .single();
-  
-  if (schoolError || !school) {
-    throw new BadRequestException('Invalid school email domain');
-  }
+      // Check if user already exists
+      const { data: existingUser } = await this.supabase
+        .client
+        .from('users')
+        .select('id, is_verified')
+        .eq('email', registerDto.email)
+        .single();
 
-  // Check if user already exists
-  const { data: existingUser } = await this.supabase
-    .client
-    .from('users')
-    .select('id, is_verified')
-    .eq('email', registerDto.email)
-    .single();
-
-  if (existingUser?.is_verified) {
-    throw new ConflictException('User already exists');
-  }
-
-  const verificationToken = crypto.randomBytes(32).toString('hex');
-  const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-
-const hashedPassword = await bcrypt.hash(registerDto.password_hash, 10);
-
-const userData = {
-  ...registerDto,
-  password_hash: hashedPassword,
-  school_id: school.id,
-  name: registerDto.name || null,
-  gender: registerDto.gender || null,
-  verification_token: verificationToken,
-  verification_token_expires_at: tokenExpiry.toISOString(),
-  is_verified: false
-};
-
-  let user;
-  if (existingUser && !existingUser.is_verified) {
-    const { data, error } = await this.supabase
-      .client
-      .from('users')
-      .update(userData)
-      .eq('email', registerDto.email)
-      .select('*')
-      .single();
-
-    if (error) throw new InternalServerErrorException(error.message || 'Failed to update user');
-    user = data;
-  } else {
-    const { data, error } = await this.supabase
-      .client
-      .from('users')
-      .insert([userData])
-      .select('*')
-      .single();
-    
-    if (error) {
-      console.error('Supabase error:', error);
-      if (error.code === '23505') {
+      if (existingUser?.is_verified) {
         throw new ConflictException('User already exists');
       }
-      throw new InternalServerErrorException(error.message || 'Failed to create user');
+
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+      const hashedPassword = await bcrypt.hash(registerDto.password_hash, 10);
+
+      const userData = {
+        ...registerDto,
+        password_hash: hashedPassword,
+        school_id: school.id,
+        name: registerDto.name || null,
+        gender: registerDto.gender || null,
+        verification_token: verificationToken,
+        verification_token_expires_at: tokenExpiry.toISOString(),
+        is_verified: false,
+        terms_accepted: registerDto.terms_accepted,
+        terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
+      };
+
+      let user;
+      if (existingUser && !existingUser.is_verified) {
+        const { data, error } = await this.supabase
+          .client
+          .from('users')
+          .update(userData)
+          .eq('email', registerDto.email)
+          .select('*')
+          .single();
+
+        if (error) throw new InternalServerErrorException(error.message || 'Failed to update user');
+        user = data;
+      } else {
+        const { data, error } = await this.supabase
+          .client
+          .from('users')
+          .insert([userData])
+          .select('*')
+          .single();
+        
+        if (error) {
+          console.error('Supabase error:', error);
+          if (error.code === '23505') {
+            throw new ConflictException('User already exists');
+          }
+          throw new InternalServerErrorException(error.message || 'Failed to create user');
+        }
+        user = data;
+      }
+
+      // Send verification email
+      try {
+        await this.mailService.sendVerificationEmail(user.email, verificationToken);
+      } catch (error) {
+        console.error('Failed to send verification email:', error);
+        // Don't throw error here to avoid rolling back user creation
+      }
+
+      // Remove sensitive data from response
+      const { verification_token, verification_token_expires_at, password_hash, ...safeUser } = user;
+      return safeUser;
+    } catch (error) {
+      console.error('Student registration error:', error);
+      throw error;
     }
-    user = data;
   }
 
-  // Send verification email
+
+async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User> }> {
   try {
-    // In your AuthService
-    await this.mailService.sendVerificationEmail(user.email, verificationToken);
-  } catch (error) {
-    console.error('Failed to send verification email:', error);
-    // Don't throw error here to avoid rolling back user creation
-  }
+    
+    
+    // Validate token format
+    if (!token || typeof token !== 'string') {
+      throw new BadRequestException('Token is required');
+    }
 
-  // Remove sensitive data from response
-  const { verification_token, verification_token_expires_at, ...safeUser } = user;
-  return safeUser;
-}
+    const cleanToken = token.trim();
+    if (cleanToken.length !== 64) {
+      throw new BadRequestException('Invalid verification token format');
+    }
 
-  async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User> }> {
-  if (!token || token.length !== 64) {
-    throw new BadRequestException('Invalid verification token format');
-  }
 
-  const { data: tokenCheck, error: tokenCheckError } = await this.supabase
-    .client
-    .from('users') // ✅ Fixed: changed from 'user' to 'users'
-    .select('id, email, verification_token, verification_token_expires_at, is_verified')
-    .eq('verification_token', token)
-    .single();
+    // Find user by token with better error handling
+    const { data: user, error: userError } = await this.supabase
+      .client
+      .from('users')
+      .select('*')
+      .eq('verification_token', cleanToken)
+      .single();
 
-  if (tokenCheckError && tokenCheckError.code !== 'PGRST116') {
-    throw new InternalServerErrorException('Database error during verification');
-  }
+    if (userError) {
+      
+      if (userError.code === 'PGRST116' || userError.message?.includes('No rows found')) {
+        throw new BadRequestException('Invalid verification token');
+      }
+      
+      throw new InternalServerErrorException('Database error during verification');
+    }
 
-  if (!tokenCheck) {
-    throw new BadRequestException('Invalid verification token');
-  }
+        if (user.is_verified) {
+      return {
+        message: 'Email is already verified. You can proceed to login.',
+        user: {
+          id: user.id,
+          email: user.email,
+          is_verified: true
+        }
+      };
+    }
 
-  if (tokenCheck.is_verified) {
-    throw new BadRequestException('Email is already verified');
-  }
+    if (!user) {
+      throw new BadRequestException('Invalid verification token');
+    }
 
-  // Check expiry
-  const now = new Date();
-  const expiryDate = new Date(tokenCheck.verification_token_expires_at);
+    if (user.is_verified) {
+      // Return success even if already verified for better UX
+      return {
+        message: 'Email is already verified',
+        user: {
+          id: user.id,
+          email: user.email,
+          is_verified: true
+        }
+      };
+    }
 
-  if (now > expiryDate) {
-    throw new BadRequestException('Verification token has expired. Please request a new verification email.');
-  }
+    // Check token expiry
+    if (user.verification_token_expires_at) {
+      const now = new Date();
+      const expiryDate = new Date(user.verification_token_expires_at);
+      
+      if (now > expiryDate) {
+        throw new BadRequestException('Verification token has expired. Please request a new verification email.');
+      }
+    }
 
-  // Update user
-  const { data: updatedUser, error: updateError } = await this.supabase
-    .client
-    .from('users') // ✅ Fixed: changed from 'user' to 'users'
-    .update({ 
-      is_verified: true, 
+    // Update user verification status
+    const updateData = {
+      is_verified: true,
       verification_token: null,
       verification_token_expires_at: null,
-      verified_at: new Date().toISOString()
-    })
-    .eq('id', tokenCheck.id)
-    .select('id, email, is_verified, verified_at')
-    .single();
+      verified_at: new Date().toISOString(),
+      status: 'verified' as const
+    };
 
-  if (updateError) {
-    throw new InternalServerErrorException('Failed to verify email');
+    console.log('Updating user with data:', updateData);
+
+    const { data: updatedUser, error: updateError } = await this.supabase
+      .client
+      .from('users')
+      .update(updateData)
+      .eq('id', user.id)
+      .select('id, email, is_verified, verified_at')
+      .single();
+
+    if (updateError) {
+      console.error('Update error:', updateError);
+      throw new InternalServerErrorException('Failed to update user verification status');
+    }
+
+    console.log('=== VERIFY EMAIL SUCCESS ===');
+    return {
+      message: 'Email verified successfully',
+      user: updatedUser
+    };
+
+  } catch (error) {
+    console.error('=== VERIFY EMAIL ERROR ===', error);
+    
+    // Re-throw the error to maintain the original error type
+    if (error instanceof BadRequestException || error instanceof InternalServerErrorException) {
+      throw error;
+    }
+    
+    // Handle unexpected errors
+    throw new InternalServerErrorException('An unexpected error occurred during verification');
   }
-
-  return {
-    message: 'Email verified successfully',
-    user: updatedUser
-  };
 }
 
 
@@ -364,34 +431,88 @@ async resendVerificationEmail(email: string): Promise<{ message: string }> {
   return { message: 'Verification email sent successfully' };
 }
 
-async login(user: User, inputPassword: string) {
-  const isMatch = await bcrypt.compare(inputPassword, user.password_hash);
-  if (!isMatch) {
-    throw new UnauthorizedException('Invalid credentials');
+  async login(user: User, inputPassword: string) {
+    try {
+      const isMatch = await bcrypt.compare(inputPassword, user.password_hash);
+      if (!isMatch) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+
+      // Check if user has accepted terms (only for new registrations after terms implementation)
+      if (user.role !== 'super_admin' && !user.terms_accepted) {
+        throw new UnauthorizedException('Please accept the terms and conditions to continue');
+      }
+
+      const payload = {
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+      };
+
+      return {
+        access_token: this.jwtService.sign(payload),
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          is_verified: user.is_verified,
+          name: user.name,
+          phone: user.phone,
+          gender: user.gender,
+          school_id: user.school_id,
+          terms_accepted: user.terms_accepted,
+        },
+      };
+    } catch (error) {
+      console.error('Login error:', error);
+      throw error;
+    }
   }
 
-  const payload = {
-    sub: user.id,
-    email: user.email,
-    role: user.role,
-  };
+  // Add terms acceptance method
+  async acceptTerms(userId: string): Promise<{ message: string }> {
+    try {
+      const { error } = await this.supabase.client
+        .from('users')
+        .update({ 
+          terms_accepted: true,
+          terms_accepted_at: new Date().toISOString()
+        })
+        .eq('id', userId);
 
-  return {
-    access_token: this.jwtService.sign(payload),
-    user: {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      is_verified: user.is_verified,
-      name: user.name,
-      phone: user.phone,
-      gender: user.gender,
-      school_id: user.school_id,
-    },
-  };
-}
+      if (error) {
+        throw new InternalServerErrorException('Failed to accept terms');
+      }
 
-// Add this method to your AuthService class
+      return { message: 'Terms and conditions accepted successfully' };
+    } catch (error) {
+      console.error('Accept terms error:', error);
+      throw error;
+    }
+  }
+
+  // Add terms status check method
+  async getTermsStatus(userId: string): Promise<{ terms_accepted: boolean; terms_accepted_at?: string }> {
+    try {
+      const { data: user, error } = await this.supabase.client
+        .from('users')
+        .select('terms_accepted, terms_accepted_at')
+        .eq('id', userId)
+        .single();
+
+      if (error || !user) {
+        throw new NotFoundException('User not found');
+      }
+
+      return {
+        terms_accepted: user.terms_accepted || false,
+        terms_accepted_at: user.terms_accepted_at
+      };
+    } catch (error) {
+      console.error('Get terms status error:', error);
+      throw error;
+    }
+  }
 
 async changePassword(
   userId: string, 
@@ -453,6 +574,24 @@ async changePassword(
     await this.mailService.sendPasswordResetEmail(email, resetToken);
   }
 
+    async requestAdminPasswordReset(email: string) {
+    const user = await this.findUserByEmail(email);
+    if (!user) return; // Don't reveal if user exists
+    
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiry = new Date(Date.now() + 3600000); // 1 hour
+    
+    await this.supabase.client
+      .from('users')
+      .update({ 
+        password_reset_token: resetToken,
+        reset_token_expiry: expiry
+      })
+      .eq('id', user.id);
+    
+    await this.mailService.sendAdminPasswordResetEmail(email, resetToken);
+  }
+
 async resetPassword(dto: ResetPasswordDto) {
   const user = await this.findUserByResetToken(dto.token);
 
@@ -504,7 +643,7 @@ async getUserProfile(userId: string): Promise<UserDetails> {
   // Step 1: Get user data
   const { data: user, error: userError } = await this.supabase.client
     .from('users')
-    .select('id, name, email, phone, gender, is_verified, role, school_id')
+    .select('id, name, email, phone, gender, is_verified, role, school_id, terms_accepted, terms_accepted_at')
     .eq('id', userId)
     .single();
 
@@ -549,6 +688,8 @@ async getUserProfile(userId: string): Promise<UserDetails> {
     phone: user.phone,
     gender: user.gender, // Make sure this is included
     is_verified: user.is_verified,
+    terms_accepted: user.terms_accepted,
+    terms_accepted_at: user.terms_accepted_at,
     role: user.role,
     school_id: user.school_id,
     school,
@@ -630,6 +771,8 @@ async getUserProfile(userId: string): Promise<UserDetails> {
         is_verified: updatedUser.is_verified,
         role: updatedUser.role,
         school_id: updatedUser.school_id,
+        terms_accepted: currentUser.terms_accepted,
+        terms_accepted_at: currentUser.terms_accepted_at,
         school,
       };
 

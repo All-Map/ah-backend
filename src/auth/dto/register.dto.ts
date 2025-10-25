@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 
 export enum Gender {
   MALE = 'male',
@@ -33,4 +33,8 @@ export class RegisterDto {
   @IsOptional()
   @IsEnum(Gender)
   gender?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  terms_accepted?: boolean;
 }
