@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsBoolean, IsPhoneNumber } from 'class-validator';
 
 export enum Gender {
   MALE = 'male',
@@ -26,4 +26,20 @@ export class UpdateProfileDto {
 
   @IsOptional()
   terms_accepted_at?: Date;
+
+  @IsOptional()
+  @IsString()
+  emergency_contact_name?: string;
+
+  @IsOptional()
+  @IsPhoneNumber()
+  emergency_contact_phone?: string;
+
+  @IsOptional()
+  @IsString()
+  emergency_contact_relationship?: string;
+
+  @IsOptional()
+  @IsString()
+  emergency_contact_email?: string;
 }

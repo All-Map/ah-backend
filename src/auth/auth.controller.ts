@@ -1,4 +1,5 @@
-import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Res, Request, Put, Patch, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Patch, BadRequestException, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -10,6 +11,7 @@ import { User } from 'src/entities/user.entity';
 import { RolesGuard } from './guards/roles.guard';
 import { ProfileService } from 'src/profile/profile.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { OnboardingDto } from 'src/obboarding/dto/onboarding.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -101,6 +103,23 @@ export class AuthController {
         error.message || 'Failed to change password'
       );
     }
+  }
+
+    @Post('onboarding')
+  @UseGuards(JwtAuthGuard)
+  async completeOnboarding(
+    @Req() req: Request,
+    @Body() onboardingDto: OnboardingDto
+  ) {
+    const user = req.user as User;
+    return this.authService.completeOnboarding(user.id, onboardingDto);
+  }
+
+  @Get('onboarding/status')
+  @UseGuards(JwtAuthGuard)
+  async getOnboardingStatus(@Req() req: Request) {
+    const user = req.user as User;
+    return this.authService.getOnboardingStatus(user.id);
   }
 
   @Post('request-reset')

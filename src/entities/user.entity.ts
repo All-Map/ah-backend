@@ -29,6 +29,9 @@ export class User {
   @Column({ default: false })
   is_verified: boolean;
 
+  @Column({ default: false })
+  onboarding_completed: boolean;
+
   @Column({ nullable: true })
   verification_token: string;
 
@@ -63,6 +66,19 @@ export class User {
   @Column({ nullable: true })
   school_id: string;
 
+  // Emergency Contact Fields
+  @Column({ nullable: true })
+  emergency_contact_name: string;
+
+  @Column({ nullable: true })
+  emergency_contact_phone: string;
+
+  @Column({ nullable: true })
+  emergency_contact_relationship: string;
+
+  @Column({ nullable: true })
+  emergency_contact_email: string;
+
   @BeforeInsert()
   async hashPassword() {
     if (this.password_hash) {
@@ -74,9 +90,8 @@ export class User {
     return bcrypt.compare(attempt, this.password_hash);
   }
 
-@ManyToMany(() => AdminVerification, verification => verification.user)
-verification_requests: AdminVerification[];
-  
+  @ManyToMany(() => AdminVerification, verification => verification.user)
+  verification_requests: AdminVerification[];
 }
 
 export enum UserRole {

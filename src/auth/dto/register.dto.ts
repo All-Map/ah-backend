@@ -37,4 +37,23 @@ export class RegisterDto {
   @IsOptional()
   @IsBoolean()
   terms_accepted?: boolean;
+
+  @IsOptional()
+  terms_accepted_at?: Date;
+
+  @IsOptional()
+  @IsString()
+  emergency_contact_name?: string;
+
+  @IsOptional()
+  @IsString()
+  emergency_contact_phone?: string;
+
+  @IsOptional()
+  @IsString()
+  emergency_contact_relationship?: string;
+
+  @IsOptional()
+  @IsString()
+  emergency_contact_email?: string;
 }

@@ -12,6 +12,7 @@ import { CloudinaryService } from './cloudinary/cloudinary.service';
 import { RoomsModule } from './rooms/rooms.module';
 import { BookingsModule } from './bookings/booking.module';
 import { ReviewsModule } from './review/review.module';
+import { SchoolModule } from './school/school.module';
 
 @Module({
   imports: [
@@ -22,10 +23,8 @@ import { ReviewsModule } from './review/review.module';
     HostelsModule,
     RoomsModule,
     BookingsModule,
-    ReviewsModule
-    // UsersModule,
-    // HostelsModule,
-    // SchoolsModule,
+    ReviewsModule,
+    SchoolModule,
   ],
   controllers: [AppController],
   providers: [AppService, CloudinaryService],
