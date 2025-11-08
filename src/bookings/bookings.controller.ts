@@ -113,61 +113,42 @@ export class BookingsController {
     return await this.bookingsService.createBooking(createBookingDto);
   }
 
-  @Post('admin-create')
-@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
-@ApiOperation({ summary: 'Create a new booking with verified payment (Admin)' })
-@UsePipes(new ValidationPipe({ 
-  transform: true,
-  whitelist: true,
-  forbidNonWhitelisted: true,
-  exceptionFactory: (errors) => {
-    console.log('❌ Validation failed:', JSON.stringify(errors, null, 2));
-    return new BadRequestException(errors);
-  }
-}))
-async createAdminBooking(
-  @Body() createBookingDto: CreateBookingDto,
-  @Request() req: any
-): Promise<any> {
-  
-  console.log('='.repeat(80));
-  console.log('📥 ADMIN BOOKING REQUEST RECEIVED');
-  console.log('='.repeat(80));
-  console.log('Timestamp:', new Date().toISOString());
-  console.log('User:', req.user?.id || 'Unknown');
-  console.log('Request body keys:', Object.keys(createBookingDto));
-  console.log('Full request body:', JSON.stringify(createBookingDto, null, 2));
-  console.log('='.repeat(80));
+ @Post('admin-create')
+  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Create a new booking with verified payment (Admin)' })
+  @UsePipes(new ValidationPipe({ 
+    transform: true,
+    whitelist: true,  // Only allow whitelisted properties
+    forbidNonWhitelisted: false,  // Changed to false - just ignore extra properties instead of failing
+    transformOptions: {
+      enableImplicitConversion: true
+    }
+  }))
+  async createAdminBooking(
+    @Body() createBookingDto: CreateBookingDto,
+    @Request() req: any
+  ): Promise<any> {
 
-  try {
-    console.log('🔄 Calling bookingsService.createAdminBooking...');
-    
-    const result = await this.bookingsService.createAdminBooking(createBookingDto);
-    
-    console.log('✅ SUCCESS - Booking created:', {
-      id: result.id,
-      status: result.status,
-      studentName: result.studentName,
-      totalAmount: result.totalAmount
-    });
-    
-    return {
-      success: true,
-      booking: result,
-      message: 'Booking created successfully'
-    };
-    
-  } catch (error) {
-    console.log('❌ ERROR in controller:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack?.split('\n').slice(0, 5).join('\n')
-    });
-    
-    // Re-throw the error to let NestJS handle the HTTP response
-    throw error;
+
+    try {
+      const result = await this.bookingsService.createAdminBooking(createBookingDto);
+      return {
+        success: true,
+        booking: result,
+        message: 'Booking created successfully'
+      };
+      
+    } catch (error) {
+      console.log('❌ ERROR in controller:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack?.split('\n').slice(0, 5).join('\n')
+      });
+      
+      // Re-throw the error to let NestJS handle the HTTP response
+      throw error;
+    }
   }
-}
 
   @Get()
   @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)

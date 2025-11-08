@@ -685,87 +685,116 @@ async getUserProfile(userId: string): Promise<UserDetails> {
 
   return profile;
 }
-    async updateProfile(userId: string, updateProfileDto: UpdateProfileDto): Promise<UserDetails> {
-      // Get current user data first
-      const { data: currentUser, error: fetchError } = await this.supabase.client
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single();
 
-      if (fetchError || !currentUser) {
-        throw new NotFoundException('User not found');
-      }
+async updateProfile(userId: string, updateProfileDto: UpdateProfileDto): Promise<UserDetails> {
+  // Get current user data first
+  const { data: currentUser, error: fetchError } = await this.supabase.client
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .single();
 
-      // Prepare update data (only include fields that are provided)
-      const updateData: any = {};
-      if (updateProfileDto.name !== undefined) updateData.name = updateProfileDto.name;
-      if (updateProfileDto.phone !== undefined) updateData.phone = updateProfileDto.phone;
-      if (updateProfileDto.gender !== undefined) updateData.gender = updateProfileDto.gender;
+  if (fetchError || !currentUser) {
+    throw new NotFoundException('User not found');
+  }
 
-      // Only update if there's something to update
-      if (Object.keys(updateData).length === 0) {
-        throw new BadRequestException('No valid fields to update');
-      }
+  // Prepare update data (include ALL updatable fields)
+  const updateData: any = {};
+  
+  // Personal info fields
+  if (updateProfileDto.name !== undefined) updateData.name = updateProfileDto.name;
+  if (updateProfileDto.phone !== undefined) updateData.phone = updateProfileDto.phone;
+  if (updateProfileDto.gender !== undefined) updateData.gender = updateProfileDto.gender;
+  
+  // Emergency contact fields
+  if (updateProfileDto.emergency_contact_name !== undefined) {
+    updateData.emergency_contact_name = updateProfileDto.emergency_contact_name;
+  }
+  if (updateProfileDto.emergency_contact_phone !== undefined) {
+    updateData.emergency_contact_phone = updateProfileDto.emergency_contact_phone;
+  }
+  if (updateProfileDto.emergency_contact_relationship !== undefined) {
+    updateData.emergency_contact_relationship = updateProfileDto.emergency_contact_relationship;
+  }
+  if (updateProfileDto.emergency_contact_email !== undefined) {
+    updateData.emergency_contact_email = updateProfileDto.emergency_contact_email || null;
+  }
+  
+  // Terms fields
+  if (updateProfileDto.terms_accepted !== undefined) {
+    updateData.terms_accepted = updateProfileDto.terms_accepted;
+  }
+  if (updateProfileDto.terms_accepted_at !== undefined) {
+    updateData.terms_accepted_at = updateProfileDto.terms_accepted_at;
+  }
 
-      // Update user profile
-      const { data: updatedUser, error: updateError } = await this.supabase.client
-        .from('users')
-        .update(updateData)
-        .eq('id', userId)
-        .select('id, name, email, phone, gender, is_verified, role, school_id')
-        .single();
+  // Only update if there's something to update
+  if (Object.keys(updateData).length === 0) {
+    throw new BadRequestException('No valid fields to update');
+  }
 
-      if (updateError) {
-        console.error('Profile update error:', updateError);
-        throw new InternalServerErrorException('Failed to update profile');
-      }
+  console.log('Updating user with data:', updateData);
 
-      // Get school data if user has a school_id
-      let school: {
-        id: string;
-        name: string;
-        domain: string;
-        location: string;
-      } | undefined = undefined;
+  // Update user profile
+  const { data: updatedUser, error: updateError } = await this.supabase.client
+    .from('users')
+    .update(updateData)
+    .eq('id', userId)
+    .select('id, name, email, phone, gender, is_verified, role, school_id, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, emergency_contact_email, terms_accepted, terms_accepted_at, onboarding_completed')
+    .single();
 
-      if (updatedUser.school_id) {
-        const { data: schoolData, error: schoolError } = await this.supabase.client
-          .from('schools')
-          .select('id, name, domain, location')
-          .eq('id', updatedUser.school_id)
-          .single();
+  if (updateError) {
+    console.error('Profile update error:', updateError);
+    throw new InternalServerErrorException('Failed to update profile');
+  }
 
-        if (!schoolError && schoolData) {
-          school = {
-            id: schoolData.id,
-            name: schoolData.name,
-            domain: schoolData.domain,
-            location: schoolData.location,
-          };
-        }
-      }
+  // Get school data if user has a school_id
+  let school: {
+    id: string;
+    name: string;
+    domain: string;
+    location: string;
+  } | undefined = undefined;
 
-      // Return updated profile
-      const profile: UserDetails = {
-        id: updatedUser.id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        phone: updatedUser.phone,
-        gender: updatedUser.gender,
-        is_verified: updatedUser.is_verified,
-        role: updatedUser.role,
-        school_id: updatedUser.school_id,
-        terms_accepted: currentUser.terms_accepted,
-        terms_accepted_at: currentUser.terms_accepted_at,
-        school,
-        onboarding_completed: currentUser.onboarding_completed,
-        emergency_contact_name: currentUser.emergency_contact_name,
-        emergency_contact_phone: currentUser.emergency_contact_phone,
-        emergency_contact_relationship: currentUser.emergency_contact_relationship,
-        emergency_contact_email: currentUser.emergency_contact_email,
+  if (updatedUser.school_id) {
+    const { data: schoolData, error: schoolError } = await this.supabase.client
+      .from('schools')
+      .select('id, name, domain, location')
+      .eq('id', updatedUser.school_id)
+      .single();
+
+    if (!schoolError && schoolData) {
+      school = {
+        id: schoolData.id,
+        name: schoolData.name,
+        domain: schoolData.domain,
+        location: schoolData.location,
       };
-
-      return profile;
     }
+  }
+
+  // Return updated profile with all fields
+  const profile: UserDetails = {
+    id: updatedUser.id,
+    name: updatedUser.name,
+    email: updatedUser.email,
+    phone: updatedUser.phone,
+    gender: updatedUser.gender,
+    is_verified: updatedUser.is_verified,
+    role: updatedUser.role,
+    school_id: updatedUser.school_id,
+    terms_accepted: updatedUser.terms_accepted,
+    terms_accepted_at: updatedUser.terms_accepted_at,
+    onboarding_completed: updatedUser.onboarding_completed,
+    emergency_contact_name: updatedUser.emergency_contact_name,
+    emergency_contact_phone: updatedUser.emergency_contact_phone,
+    emergency_contact_relationship: updatedUser.emergency_contact_relationship,
+    emergency_contact_email: updatedUser.emergency_contact_email,
+    school,
+  };
+
+  console.log('Profile updated successfully:', profile.id);
+
+  return profile;
+}
 }

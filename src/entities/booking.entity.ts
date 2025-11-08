@@ -38,7 +38,7 @@ export class Booking {
   @Column({ name: 'room_id' })
   roomId: string;
 
-  @Column({ name: 'student_id' })
+  @Column({ name: 'student_id', nullable: true })
   studentId: string;
 
   @Column({ name: 'student_name', length: 100 })

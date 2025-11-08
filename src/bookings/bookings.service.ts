@@ -67,6 +67,286 @@ export class BookingsService {
     }
   }
 
+   async createAdminBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
+    const { 
+      hostelId, roomId, studentId, checkInDate, checkOutDate, 
+      bookingType, paymentReference, bookingFeeAmount, ...bookingData 
+    } = createBookingDto;
+
+    console.log('📝 Creating admin booking for student:', studentId);
+
+    // Verify payment first
+    if (!paymentReference || bookingFeeAmount !== this.BOOKING_FEE) {
+      throw new BadRequestException(`Booking fee of ${this.BOOKING_FEE} GHS required`);
+    }
+
+    const paymentVerification = await this.verifyPayment({
+      reference: paymentReference,
+      expectedAmount: this.BOOKING_FEE
+    });
+
+    if (!paymentVerification.verified) {
+      throw new BadRequestException('Payment verification failed');
+    }
+
+    // Verify hostel and room exist
+    const [hostel, room] = await Promise.all([
+      this.hostelRepository.findOne({ where: { id: hostelId } }),
+      this.roomRepository.findOne({ where: { id: roomId, hostelId }, relations: ['roomType'] })
+    ]);
+
+    if (!hostel) {
+      throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
+    }
+
+    if (!room) {
+      throw new NotFoundException(`Room with ID ${roomId} not found in this hostel`);
+    }
+
+    // Check if room is available
+    if (!room.isAvailable()) {
+      throw new ConflictException('Room is not available for booking');
+    }
+
+    // Try to find the user - but don't fail if not found
+    const user = await this.userRepository.findOne({ where: { id: studentId } });
+    
+    // Only validate gender and single booking constraint if user exists
+    if (user) {
+      console.log('✅ User found in database, validating constraints...');
+      await this.validateSingleBookingConstraint(studentId);
+      await this.validateGenderCompatibility(user, room);
+    } else {
+      console.log('⚠️ User not found in database - creating booking without user validation');
+      // For non-registered students, just log a warning
+      console.log('📋 Booking for external/non-registered student:', {
+        name: bookingData.studentName,
+        email: bookingData.studentEmail,
+        phone: bookingData.studentPhone
+      });
+    }
+
+    // Validate dates
+    const checkIn = new Date(checkInDate);
+    const checkOut = new Date(checkOutDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (checkIn < today) {
+      throw new BadRequestException('Check-in date cannot be in the past');
+    }
+
+    if (checkOut <= checkIn) {
+      throw new BadRequestException('Check-out date must be after check-in date');
+    }
+
+    // Check for conflicting bookings
+    const conflictingBookings = await this.bookingRepository.find({
+      where: {
+        roomId,
+        status: In([BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]),
+        checkInDate: Between(checkIn, checkOut),
+      }
+    });
+
+    if (conflictingBookings.length > 0) {
+      throw new ConflictException('Room is already booked for the selected dates');
+    }
+
+    // Calculate total amount
+    const totalRoomAmount = await this.calculateBookingAmount(
+      room.roomType, 
+      bookingType, 
+      checkIn, 
+      checkOut
+    );
+
+    // Create booking in transaction
+    return await this.dataSource.transaction(async manager => {
+      const booking = manager.create(Booking, {
+        hostelId,
+        roomId,
+        studentId, // Can be any string - doesn't need to be a valid user ID
+        checkInDate: checkIn,
+        checkOutDate: checkOut,
+        bookingType,
+        totalAmount: totalRoomAmount,
+        amountPaid: this.BOOKING_FEE,
+        amountDue: totalRoomAmount,
+        paymentDueDate: new Date(checkIn.getTime() - 7 * 24 * 60 * 60 * 1000),
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PARTIAL,
+        confirmedAt: new Date(),
+        bookingFee: this.BOOKING_FEE,
+        bookingFeePaid: true,
+        paymentReference: paymentReference,
+        bookingFeePaidAt: new Date(paymentVerification.paidAt),
+        ...bookingData
+      });
+
+      const savedBooking = await manager.save(Booking, booking);
+
+      // Create payment record
+      const payment = manager.create(Payment, {
+        bookingId: savedBooking.id,
+        amount: this.BOOKING_FEE,
+        paymentMethod: PaymentMethod.CARD,
+        paymentType: PaymentType.BOOKING_PAYMENT,
+        transactionRef: paymentReference,
+        notes: 'Booking fee via Paystack',
+        status: 'completed',
+        paymentDate: new Date(paymentVerification.paidAt)
+      });
+
+      await manager.save(Payment, payment);
+
+      // Update room occupancy
+      room.currentOccupancy += 1;
+      if (room.currentOccupancy >= room.maxOccupancy) {
+        room.status = RoomStatus.OCCUPIED;
+      }
+      await manager.save(Room, room);
+
+      // Update room type availability
+      const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+      if (roomType && roomType.availableRooms > 0) {
+        roomType.availableRooms -= 1;
+        await manager.save(RoomType, roomType);
+      }
+
+      console.log('✅ Booking created successfully:', savedBooking.id);
+
+      return savedBooking;
+    });
+  }
+
+  /**
+   * Validates that a user can only have one active booking at a time
+   * Only called if user exists in database
+   */
+  private async validateSingleBookingConstraint(studentId: string): Promise<void> {
+    const activeBookingStatuses = [
+      BookingStatus.PENDING,
+      BookingStatus.CONFIRMED,
+      BookingStatus.CHECKED_IN
+    ];
+
+    const existingBooking = await this.bookingRepository.findOne({
+      where: {
+        studentId,
+        status: In(activeBookingStatuses)
+      },
+      relations: ['hostel', 'room']
+    });
+
+    if (existingBooking) {
+      const statusText = existingBooking.status.replace('_', ' ').toUpperCase();
+      throw new ConflictException(
+        `This student already has an active booking (${statusText}) at ${existingBooking.hostel?.name || 'Unknown Hostel'}, Room ${existingBooking.room?.roomNumber || 'N/A'}. Please complete or cancel the current booking before creating a new one.`
+      );
+    }
+  }
+
+  /**
+   * Validates gender compatibility - only called if user exists
+   */
+  private async validateGenderCompatibility(user: User, room: Room): Promise<void> {
+    if (!user.gender || user.gender === Gender.PREFER_NOT_TO_SAY) {
+      return;
+    }
+
+    const roomType = await this.roomTypeRepository.findOne({
+      where: { id: room.roomType.id }
+    });
+
+    if (!roomType) {
+      throw new NotFoundException('Room type not found');
+    }
+
+    if (roomType.allowedGenders && roomType.allowedGenders.length > 0) {
+      const userGender = user.gender.toLowerCase();
+      const allowedGenders = roomType.allowedGenders.map(g => g.toLowerCase());
+
+      if (!allowedGenders.includes(userGender) && !allowedGenders.includes('mixed')) {
+        const allowedGendersText = allowedGenders.join(', ');
+        throw new BadRequestException(
+          `This room is restricted to ${allowedGendersText} students only. The student's gender (${user.gender}) is not compatible with this room type.`
+        );
+      }
+    }
+
+    await this.validateRoomGenderMix(user, room);
+  }
+
+  /**
+   * Validates room gender mix - only called if user exists
+   */
+  private async validateRoomGenderMix(user: User, room: Room): Promise<void> {
+    const currentBookings = await this.bookingRepository.find({
+      where: {
+        roomId: room.id,
+        status: In([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN])
+      }
+    });
+
+    if (currentBookings.length === 0) {
+      return;
+    }
+
+    const currentOccupantIds = currentBookings.map(booking => booking.studentId);
+    const currentOccupants = await this.userRepository.find({
+      where: { id: In(currentOccupantIds) }
+    });
+
+    const currentGenders = currentOccupants
+      .map(occupant => occupant.gender?.toLowerCase())
+      .filter(gender => gender && gender !== Gender.PREFER_NOT_TO_SAY.toLowerCase());
+
+    const roomType = room.roomType;
+    if (!roomType.allowedGenders || 
+        roomType.allowedGenders.includes('mixed') || 
+        currentGenders.length === 0) {
+      return;
+    }
+
+    const userGender = user.gender?.toLowerCase();
+    if (userGender && userGender !== Gender.PREFER_NOT_TO_SAY.toLowerCase()) {
+      const existingGender = currentGenders[0];
+      if (existingGender && userGender !== existingGender) {
+        throw new BadRequestException(
+          `This room currently has ${existingGender} occupants. Mixed gender occupancy is not allowed in this room type.`
+        );
+      }
+    }
+  }
+
+  /**
+   * Calculate booking amount based on room type and booking duration
+   */
+  private async calculateBookingAmount(
+    roomType: RoomType, 
+    bookingType: BookingType, 
+    checkIn: Date, 
+    checkOut: Date
+  ): Promise<number> {
+    const duration = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
+    
+    switch (bookingType) {
+      case BookingType.SEMESTER:
+        return roomType.pricePerSemester;
+      case BookingType.MONTHLY:
+        const months = Math.ceil(duration / 30);
+        return roomType.pricePerMonth * months;
+      case BookingType.WEEKLY:
+        const weeks = Math.ceil(duration / 7);
+        return roomType.pricePerWeek ? 
+          roomType.pricePerWeek * weeks : 
+          roomType.pricePerMonth * weeks / 4;
+      default:
+        throw new BadRequestException('Invalid booking type');
+    }
+  }
+
   async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
     const { 
       hostelId, 
@@ -227,208 +507,6 @@ export class BookingsService {
       return savedBooking;
     });
   }
-
-  /**
-   * Validates that a user can only have one active booking at a time
-   */
-  private async validateSingleBookingConstraint(studentId: string): Promise<void> {
-    const activeBookingStatuses = [
-      BookingStatus.PENDING,
-      BookingStatus.CONFIRMED,
-      BookingStatus.CHECKED_IN
-    ];
-
-    const existingBooking = await this.bookingRepository.findOne({
-      where: {
-        studentId,
-        status: In(activeBookingStatuses)
-      },
-      relations: ['hostel', 'room']
-    });
-
-    if (existingBooking) {
-      const statusText = existingBooking.status.replace('_', ' ').toUpperCase();
-      throw new ConflictException(
-        `You already have an active booking (${statusText}) at ${existingBooking.hostel?.name || 'Unknown Hostel'}, Room ${existingBooking.room?.roomNumber || 'N/A'}. Please complete or cancel your current booking before creating a new one.`
-      );
-    }
-  }
-
-  /**
-   * Validates gender compatibility
-   */
-  private async validateGenderCompatibility(user: User, room: Room): Promise<void> {
-    if (!user.gender || user.gender === Gender.PREFER_NOT_TO_SAY) {
-      return;
-    }
-
-    const roomType = await this.roomTypeRepository.findOne({
-      where: { id: room.roomType.id }
-    });
-
-    if (!roomType) {
-      throw new NotFoundException('Room type not found');
-    }
-
-    if (roomType.allowedGenders && roomType.allowedGenders.length > 0) {
-      const userGender = user.gender.toLowerCase();
-      const allowedGenders = roomType.allowedGenders.map(g => g.toLowerCase());
-
-      if (!allowedGenders.includes(userGender) && !allowedGenders.includes('mixed')) {
-        const allowedGendersText = allowedGenders.join(', ');
-        throw new BadRequestException(
-          `This room is restricted to ${allowedGendersText} students only. Your profile gender (${user.gender}) is not compatible with this room type.`
-        );
-      }
-    }
-
-    await this.validateRoomGenderMix(user, room);
-  }
-
-  /**
-   * Validates room gender mix
-   */
-  private async validateRoomGenderMix(user: User, room: Room): Promise<void> {
-    const currentBookings = await this.bookingRepository.find({
-      where: {
-        roomId: room.id,
-        status: In([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN])
-      },
-      relations: ['room', 'room.roomType']
-    });
-
-    if (currentBookings.length === 0) {
-      return;
-    }
-
-    const currentOccupantIds = currentBookings.map(booking => booking.studentId);
-    const currentOccupants = await this.userRepository.find({
-      where: { id: In(currentOccupantIds) }
-    });
-
-    const currentGenders = currentOccupants
-      .map(occupant => occupant.gender?.toLowerCase())
-      .filter(gender => gender && gender !== Gender.PREFER_NOT_TO_SAY.toLowerCase());
-
-    const roomType = room.roomType;
-    if (!roomType.allowedGenders || 
-        roomType.allowedGenders.includes('mixed') || 
-        currentGenders.length === 0) {
-      return;
-    }
-
-    const userGender = user.gender?.toLowerCase();
-    if (userGender && userGender !== Gender.PREFER_NOT_TO_SAY.toLowerCase()) {
-      const existingGender = currentGenders[0];
-      if (existingGender && userGender !== existingGender) {
-        throw new BadRequestException(
-          `This room currently has ${existingGender} occupants. Mixed gender occupancy is not allowed in this room type.`
-        );
-      }
-    }
-  }
-
-  /**
-   * Calculate booking amount based on room type and booking duration
-   */
-  private async calculateBookingAmount(roomType: RoomType, bookingType: BookingType, checkIn: Date, checkOut: Date): Promise<number> {
-    const duration = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
-    
-    switch (bookingType) {
-      case BookingType.SEMESTER:
-        return roomType.pricePerSemester;
-      case BookingType.MONTHLY:
-        const months = Math.ceil(duration / 30);
-        return roomType.pricePerMonth * months;
-      case BookingType.WEEKLY:
-        const weeks = Math.ceil(duration / 7);
-        return roomType.pricePerWeek ? roomType.pricePerWeek * weeks : roomType.pricePerMonth * weeks / 4;
-      default:
-        throw new BadRequestException('Invalid booking type');
-    }
-  }
-
-  async createAdminBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
-  const { 
-    hostelId, roomId, studentId, checkInDate, checkOutDate, 
-    bookingType, paymentReference, bookingFeeAmount, ...bookingData 
-  } = createBookingDto;
-
-  // Basic validation
-  if (!paymentReference || bookingFeeAmount !== this.BOOKING_FEE) {
-    throw new BadRequestException(`Booking fee of ${this.BOOKING_FEE} GHS required`);
-  }
-
-  // Verify payment
-  const paymentVerification = await this.verifyPayment({
-    reference: paymentReference,
-    expectedAmount: this.BOOKING_FEE
-  });
-
-  if (!paymentVerification.verified) {
-    throw new BadRequestException('Payment verification failed');
-  }
-
-  // Get and validate entities
-  const [user, hostel, room] = await Promise.all([
-    this.userRepository.findOne({ where: { id: studentId } }),
-    this.hostelRepository.findOne({ where: { id: hostelId } }),
-    this.roomRepository.findOne({ where: { id: roomId, hostelId }, relations: ['roomType'] })
-  ]);
-
-  if (!user || !hostel || !room) {
-    throw new NotFoundException('Required entities not found');
-  }
-
-  // Validate constraints
-  await this.validateSingleBookingConstraint(studentId);
-  await this.validateGenderCompatibility(user, room);
-
-  const checkIn = new Date(checkInDate);
-  const checkOut = new Date(checkOutDate);
-  const totalRoomAmount = await this.calculateBookingAmount(room.roomType, bookingType, checkIn, checkOut);
-
-  // Create in transaction
-  return await this.dataSource.transaction(async manager => {
-    const booking = manager.create(Booking, {
-      hostelId, roomId, studentId,
-      checkInDate: checkIn, checkOutDate: checkOut, bookingType,
-      totalAmount: totalRoomAmount,
-      amountPaid: this.BOOKING_FEE,
-      amountDue: totalRoomAmount,
-      paymentDueDate: new Date(checkIn.getTime() - 7 * 24 * 60 * 60 * 1000),
-      status: BookingStatus.CONFIRMED,
-      paymentStatus: PaymentStatus.PARTIAL,
-      confirmedAt: new Date(),
-      ...bookingData
-    });
-
-    const savedBooking = await manager.save(Booking, booking);
-
-    // Create payment record
-    const payment = manager.create(Payment, {
-      bookingId: savedBooking.id,
-      amount: this.BOOKING_FEE,
-      paymentMethod: PaymentMethod.CARD,
-      paymentType: PaymentType.BOOKING_PAYMENT,
-      transactionRef: paymentReference,
-      notes: 'Booking fee via Paystack',
-      status: 'completed',
-      paymentDate: new Date(paymentVerification.paidAt)
-    });
-
-    await manager.save(Payment, payment);
-
-    // Update room
-    room.currentOccupancy += 1;
-    if (room.currentOccupancy >= room.maxOccupancy) {
-      room.status = RoomStatus.OCCUPIED;
-    }
-    await manager.save(Room, room);
-
-    return savedBooking;
-  });
-}
 
   /**
    * Record additional payment for booking (room balance)
