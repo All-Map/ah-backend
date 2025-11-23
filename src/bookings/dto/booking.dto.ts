@@ -70,6 +70,10 @@ export class CreateBookingDto {
   @IsString()
   notes?: string;
 
+  @ApiProperty({ description: 'Deposit amount' })
+  @IsNumber()
+  depositAmount: number = 0;
+
   @ApiPropertyOptional({ type: [EmergencyContactDto], description: 'Emergency contacts' })
   @IsOptional()
   @IsArray()

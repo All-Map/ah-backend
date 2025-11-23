@@ -1,4 +1,3 @@
-// payment.entity.ts
 import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, BeforeInsert, BeforeUpdate } from 'typeorm';
 import { Booking } from './booking.entity';
 
@@ -7,7 +6,8 @@ export enum PaymentMethod {
   BANK_TRANSFER = 'bank_transfer',
   MOBILE_MONEY = 'mobile_money',
   CARD = 'card',
-  CHEQUE = 'cheque'
+  CHEQUE = 'cheque',
+  ACCOUNT_CREDIT = 'account_credit'
 }
 
 export enum PaymentType {
@@ -15,6 +15,14 @@ export enum PaymentType {
   DEPOSIT = 'deposit',
   REFUND = 'refund',
   PENALTY = 'penalty'
+}
+
+export enum PaymentStatus {
+  PENDING = 'pending',
+  PARTIAL = 'partial',
+  PAID = 'paid',
+  REFUNDED = 'refunded',
+  OVERDUE = 'overdue'
 }
 
 @Entity('payments')

@@ -1,4 +1,3 @@
-// bookings.service.ts
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, Like, In, Not, DataSource } from 'typeorm';
@@ -22,6 +21,8 @@ import {
 } from './dto/booking.dto';
 import { Gender, User } from 'src/entities/user.entity';
 import { PaystackService } from 'src/paystack/paystack.service';
+import { DepositsService } from 'src/deposits/deposits.service';
+import { Deposit, DepositStatus, DepositType } from 'src/entities/deposit.entity';
 
 @Injectable()
 export class BookingsService {
@@ -42,6 +43,7 @@ export class BookingsService {
     private readonly userRepository: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly paystackService: PaystackService,
+    private readonly depositsService: DepositsService
   ) {}
 
   async verifyPayment(verifyPaymentDto: VerifyPaymentDto): Promise<any> {
@@ -68,10 +70,11 @@ export class BookingsService {
   }
 
    async createAdminBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
-    const { 
-      hostelId, roomId, studentId, checkInDate, checkOutDate, 
-      bookingType, paymentReference, bookingFeeAmount, ...bookingData 
-    } = createBookingDto;
+const { 
+  hostelId, roomId, studentId, checkInDate, checkOutDate, 
+  bookingType, paymentReference, bookingFeeAmount, depositAmount = 0, // Add default value
+  ...bookingData 
+} = createBookingDto;
 
     console.log('📝 Creating admin booking for student:', studentId);
 
@@ -186,6 +189,9 @@ export class BookingsService {
 
       const savedBooking = await manager.save(Booking, booking);
 
+       savedBooking.setAutoCancelDeadline();
+      await manager.save(Booking, savedBooking);
+
       // Create payment record
       const payment = manager.create(Payment, {
         bookingId: savedBooking.id,
@@ -247,10 +253,98 @@ export class BookingsService {
     }
   }
 
+  async processAutoCancellations(): Promise<{ cancelled: string[]; notified: string[] }> {
+    const result = {
+      cancelled: [] as string[],
+      notified: [] as string[]
+    };
+
+    // Find bookings that are confirmed and past their auto-cancel deadline
+    const overdueBookings = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .where('booking.status = :status', { status: BookingStatus.CONFIRMED })
+      .andWhere('booking.autoCancelAt IS NOT NULL')
+      .andWhere('booking.autoCancelAt < :now', { now: new Date() })
+      .andWhere('booking.autoCancelNotified = :notified', { notified: false })
+      .getMany();
+
+    for (const booking of overdueBookings) {
+      try {
+        // Check if minimum payment requirement is met
+        if (!booking.hasMetMinPaymentRequirement()) {
+          // Auto-cancel the booking
+          await this.dataSource.transaction(async manager => {
+            // Free up the room
+            const room = await manager.findOne(Room, { where: { id: booking.roomId } });
+            if (room) {
+              room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
+              if (room.currentOccupancy === 0) {
+                room.status = RoomStatus.AVAILABLE;
+              }
+              await manager.save(Room, room);
+
+              // Update room type availability
+              const roomType = await manager.findOne(RoomType, { 
+                where: { id: room.roomTypeId } 
+              });
+              if (roomType) {
+                roomType.availableRooms = Math.min(
+                  roomType.totalRooms, 
+                  roomType.availableRooms + 1
+                );
+                await manager.save(RoomType, roomType);
+              }
+            }
+
+            // Update booking status
+            booking.status = BookingStatus.CANCELLED;
+            booking.cancelledAt = new Date();
+            booking.cancellationReason = 'Automatically cancelled due to insufficient payment within 7 days';
+            booking.paymentStatus = PaymentStatus.CANCELLED;
+            booking.autoCancelNotified = true;
+
+            await manager.save(Booking, booking);
+          });
+
+          result.cancelled.push(booking.id);
+          console.log(`✅ Auto-cancelled booking ${booking.id} due to insufficient payment`);
+        } else {
+          // Mark as notified since requirement is met
+          booking.autoCancelNotified = true;
+          await this.bookingRepository.save(booking);
+        }
+
+      } catch (error) {
+        console.error(`❌ Failed to auto-cancel booking ${booking.id}:`, error);
+      }
+    }
+
+    return result;
+  }
+
+async getBookingPaymentOptions(bookingId: string, userId: string) {
+  const booking = await this.getBookingById(bookingId);
+  const depositBalance = await this.depositsService.getUserDepositBalance(userId);
+  
+  return {
+    booking,
+    depositBalance: depositBalance.availableBalance,
+    amountDue: parseFloat(booking.amountDue.toString()),
+    canUseDeposit: depositBalance.availableBalance > 0 && parseFloat(booking.amountDue.toString()) > 0,
+    paymentMethods: [
+      'cash',
+      'bank_transfer', 
+      'mobile_money',
+      'card',
+      'account_credit'
+    ]
+  };
+}
+
   /**
    * Validates gender compatibility - only called if user exists
    */
-  private async validateGenderCompatibility(user: User, room: Room): Promise<void> {
+private async validateGenderCompatibility(user: User, room: Room & { roomType: RoomType }): Promise<void> {
     if (!user.gender || user.gender === Gender.PREFER_NOT_TO_SAY) {
       return;
     }
@@ -355,6 +449,7 @@ export class BookingsService {
       checkInDate, 
       checkOutDate, 
       bookingType, 
+      depositAmount = 0,
       paymentReference,
       bookingFeeAmount,
       ...bookingData 
@@ -462,6 +557,9 @@ export class BookingsService {
       });
 
       const savedBooking = await manager.save(Booking, booking);
+
+       savedBooking.setAutoCancelDeadline();
+      await manager.save(Booking, savedBooking);
 
       // Create payment record for the booking fee
       const payment = manager.create(Payment, {
@@ -574,8 +672,226 @@ export class BookingsService {
     });
   }
 
-  // Get bookings with filtering and pagination
-  // Backend Fix (bookings.service.ts) - Updated getBookings method
+// In bookings.service.ts - update the createBookingWithDeposit method
+
+async createBookingWithDeposit(
+  createBookingDto: CreateBookingDto,
+  userId: string
+): Promise<Booking> {
+  const { 
+    hostelId, roomId, checkInDate, checkOutDate, 
+    bookingType, emergencyContacts, depositAmount = 70,
+    ...bookingData 
+  } = createBookingDto;
+
+  console.log('🔒 Starting booking with deposit deduction for user:', userId);
+
+  // Use a database transaction to ensure atomicity
+  return await this.dataSource.transaction(async manager => {
+    try {
+      // Step 1: Lock and verify deposit balance
+      console.log('💰 Checking deposit balance...');
+      const depositBalance = await this.depositsService.getUserDepositBalance(userId);
+      
+      if (depositBalance.availableBalance < depositAmount) {
+        throw new BadRequestException(
+          `Insufficient deposit balance. Available: GHS ${depositBalance.availableBalance.toFixed(2)}, ` +
+          `Required: GHS ${depositAmount.toFixed(2)}`
+        );
+      }
+
+      // Step 2: Get and lock the user (without relations)
+      const user = await manager
+        .createQueryBuilder(User, 'user')
+        .where('user.id = :userId', { userId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Step 3: Validate single booking constraint (with lock, without relations)
+      const existingBooking = await manager
+        .createQueryBuilder(Booking, 'booking')
+        .where('booking.studentId = :userId', { userId })
+        .andWhere('booking.status IN (:...statuses)', {
+          statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]
+        })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (existingBooking) {
+        throw new ConflictException(
+          'You already have an active booking. Please complete or cancel it before creating a new one.'
+        );
+      }
+
+      // Step 4: Get and lock the room WITHOUT relations first
+      console.log('🔐 Locking room for availability check...');
+      const room = await manager
+        .createQueryBuilder(Room, 'room')
+        .where('room.id = :roomId AND room.hostelId = :hostelId', { roomId, hostelId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!room) {
+        throw new NotFoundException('Room not found');
+      }
+
+      // Step 5: Now get the room type separately (without locking)
+      const roomType = await manager
+        .createQueryBuilder(RoomType, 'roomType')
+        .where('roomType.id = :roomTypeId', { roomTypeId: room.roomTypeId })
+        .getOne();
+
+      if (!roomType) {
+        throw new NotFoundException('Room type not found');
+      }
+
+      // Step 6: CRITICAL - Verify room availability with locked data
+      if (!this.isRoomAvailable(room)) {
+        throw new ConflictException('Room is not available for booking');
+      }
+
+      if (room.currentOccupancy >= room.maxOccupancy) {
+        throw new ConflictException('Room is now fully booked. Please select another room.');
+      }
+
+      // Step 7: Validate gender compatibility
+      await this.validateGenderCompatibility(user, { ...room, roomType } as Room & { roomType: RoomType });
+
+      // Step 8: Validate dates
+      const checkIn = new Date(checkInDate);
+      const checkOut = new Date(checkOutDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      if (checkIn < today) {
+        throw new BadRequestException('Check-in date cannot be in the past');
+      }
+
+      if (checkOut <= checkIn) {
+        throw new BadRequestException('Check-out date must be after check-in date');
+      }
+
+      // Step 9: Check for conflicting bookings (with lock, without relations)
+      const conflictingBooking = await manager
+        .createQueryBuilder(Booking, 'booking')
+        .where('booking.roomId = :roomId', { roomId })
+        .andWhere('booking.status IN (:...statuses)', {
+          statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]
+        })
+        .andWhere(
+          '(booking.checkInDate <= :checkOut AND booking.checkOutDate >= :checkIn)',
+          { checkIn, checkOut }
+        )
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (conflictingBooking) {
+        throw new ConflictException('Room is already booked for these dates');
+      }
+
+      // Step 10: Calculate amounts
+      const totalRoomAmount = await this.calculateBookingAmount(
+        roomType,
+        bookingType,
+        checkIn,
+        checkOut
+      );
+
+      const paymentDueDate = new Date(checkIn);
+      paymentDueDate.setDate(paymentDueDate.getDate() - 7);
+
+      // Step 11: Create deposit deduction record
+      console.log('💸 Creating deposit deduction record...');
+      const depositDeduction = manager.create(Deposit, {
+        userId,
+        amount: -depositAmount,
+        status: DepositStatus.COMPLETED,
+        depositType: DepositType.BOOKING_DEPOSIT,
+        paymentReference: `booking_fee_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        notes: `Booking fee deduction`,
+        paymentDate: new Date(),
+        verifiedAt: new Date()
+      });
+
+      await manager.save(Deposit, depositDeduction);
+
+      // Step 12: Create booking
+      console.log('📝 Creating booking record...');
+      const booking = manager.create(Booking, {
+        hostelId,
+        roomId,
+        studentId: userId,
+        studentName: user.name || bookingData.studentName,
+        studentEmail: user.email || bookingData.studentEmail,
+        studentPhone: user.phone || bookingData.studentPhone,
+        checkInDate: checkIn,
+        checkOutDate: checkOut,
+        bookingType,
+        totalAmount: totalRoomAmount,
+        amountPaid: depositAmount,
+        amountDue: totalRoomAmount,
+        paymentDueDate,
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PARTIAL,
+        confirmedAt: new Date(),
+        bookingFee: depositAmount,
+        bookingFeePaid: true,
+        paymentReference: depositDeduction.paymentReference,
+        bookingFeePaidAt: new Date(),
+        emergencyContacts: emergencyContacts || []
+      });
+
+      const savedBooking = await manager.save(Booking, booking);
+
+      // Step 13: Create payment record
+      const payment = manager.create(Payment, {
+        bookingId: savedBooking.id,
+        amount: depositAmount,
+        paymentMethod: PaymentMethod.ACCOUNT_CREDIT,
+        paymentType: PaymentType.BOOKING_PAYMENT,
+        transactionRef: depositDeduction.paymentReference,
+        notes: 'Booking fee from deposit balance',
+        status: 'completed',
+        paymentDate: new Date()
+      });
+
+      await manager.save(Payment, payment);
+
+      // Step 14: Update room occupancy
+      console.log('🏠 Updating room occupancy...');
+      room.currentOccupancy += 1;
+      if (room.currentOccupancy >= room.maxOccupancy) {
+        room.status = RoomStatus.OCCUPIED;
+      }
+      await manager.save(Room, room);
+
+      // Step 15: Update room type availability (without locking)
+      if (roomType && roomType.availableRooms > 0) {
+        roomType.availableRooms -= 1;
+        await manager.save(RoomType, roomType);
+      }
+
+      console.log('✅ Booking created successfully:', savedBooking.id);
+      console.log('💵 Deposit deducted:', depositAmount);
+
+      return savedBooking;
+
+    } catch (error) {
+      console.error('❌ Booking creation failed:', error);
+      throw error;
+    }
+  });
+}
+
+// Add this helper method to check room availability
+private isRoomAvailable(room: Room): boolean {
+  return room.status === RoomStatus.AVAILABLE && 
+         room.currentOccupancy < room.maxOccupancy;
+}
 
 async getBookings(filterDto: BookingFilterDto) {
   const {
@@ -807,7 +1123,7 @@ async getBookings(filterDto: BookingFilterDto) {
       // Handle refund for booking fee if cancellation is within policy
       const daysSinceBooking = Math.ceil((new Date().getTime() - booking.createdAt.getTime()) / (1000 * 60 * 60 * 24));
       if (daysSinceBooking <= 7) { // Allow refund within 7 days
-        booking.paymentStatus = PaymentStatus.REFUNDED;
+        booking.paymentStatus = PaymentStatus.CANCELLED;
         // Note: You would implement actual refund logic with Paystack here
       } else {
         booking.paymentStatus = PaymentStatus.PAID; // Keep booking fee as non-refundable

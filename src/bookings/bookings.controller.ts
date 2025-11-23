@@ -1,4 +1,3 @@
-// bookings.controller.ts
 import {
   Controller,
   Get,
@@ -46,6 +45,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
 import { PaystackService } from 'src/paystack/paystack.service';
+import { DepositsService } from 'src/deposits/deposits.service';
 
 @ApiTags('Bookings')
 @Controller('bookings')
@@ -54,7 +54,8 @@ import { PaystackService } from 'src/paystack/paystack.service';
 export class BookingsController {
   constructor(
     private readonly bookingsService: BookingsService,
-    private readonly paystackService: PaystackService
+    private readonly paystackService: PaystackService,
+    private readonly depositsService: DepositsService
   ) {}
 
   @Post('verify-payment')
@@ -112,6 +113,55 @@ export class BookingsController {
   async createBooking(@Body() createBookingDto: CreateBookingDto): Promise<Booking> {
     return await this.bookingsService.createBooking(createBookingDto);
   }
+
+  @Post('create-with-deposit-balance')
+@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@ApiOperation({ summary: 'Create booking using deposit balance for booking fee' })
+@ApiResponse({ 
+  status: HttpStatus.CREATED, 
+  description: 'Booking created successfully with deposit deduction',
+  type: Booking 
+})
+@UsePipes(new ValidationPipe({ transform: true }))
+async createBookingWithDepositBalance(
+  @Body() createBookingDto: CreateBookingDto,
+  @Request() req: any
+): Promise<{ booking: Booking; message: string; bookingFeeDeducted: number }> {
+  const userId = req.user.id;
+  
+  const booking = await this.bookingsService.createBookingWithDeposit(
+    createBookingDto,
+    userId
+  );
+
+  return {
+    booking,
+    message: 'Booking created successfully. Booking fee (GHS 70) deducted from your deposit balance.',
+    bookingFeeDeducted: 70
+  };
+}
+
+// In bookings.controller.ts
+@Get('deposit-check')
+@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@ApiOperation({ summary: 'Check if user can pay booking fee from deposit' })
+async checkDepositForBooking(@Request() req: any) {
+  const userId = req.user.id;
+  const depositCheck = await this.depositsService.canPayBookingFeeFromDeposit(userId);
+  const bookingFee = this.bookingsService.getBookingFee();
+  
+  return {
+    canCreateBooking: depositCheck.canPay,
+    bookingFee,
+    depositBalance: depositCheck.availableBalance,
+    ...(depositCheck.difference && { 
+      additionalNeeded: depositCheck.difference 
+    }),
+    message: depositCheck.canPay 
+      ? 'Sufficient deposit balance for booking fee' 
+      : 'Insufficient deposit balance for booking fee'
+  };
+}
 
  @Post('admin-create')
   @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
@@ -260,6 +310,46 @@ export class BookingsController {
   async getBookingPayments(@Param('id', ParseUUIDPipe) id: string): Promise<Payment[]> {
     return await this.bookingsService.getBookingPayments(id);
   }
+
+  @Post('create-with-deposit')
+@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@ApiOperation({ summary: 'Create booking with automatic deposit deduction' })
+@ApiResponse({ 
+  status: HttpStatus.CREATED, 
+  description: 'Booking created successfully with deposit deduction',
+  type: Booking 
+})
+@ApiResponse({ 
+  status: HttpStatus.BAD_REQUEST, 
+  description: 'Insufficient deposit balance or invalid data' 
+})
+@ApiResponse({ 
+  status: HttpStatus.CONFLICT, 
+  description: 'Room not available or already booked' 
+})
+@UsePipes(new ValidationPipe({ transform: true }))
+async createBookingWithDeposit(
+  @Body() createBookingDto: CreateBookingDto,
+  @Request() req: any
+): Promise<{ booking: Booking; message: string; depositDeducted: number }> {
+  const userId = req.user.id;
+  
+  try {
+    const booking = await this.bookingsService.createBookingWithDeposit(
+      createBookingDto,
+      userId
+    );
+
+    return {
+      booking,
+      message: 'Booking created successfully. Deposit fee deducted from your balance.',
+      depositDeducted: 70
+    };
+  } catch (error: any) {
+    console.error('Controller: Booking creation failed:', error);
+    throw error;
+  }
+}
 
   @Put(':id')
   @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)

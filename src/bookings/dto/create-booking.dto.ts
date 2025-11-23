@@ -28,6 +28,10 @@ export class CreateBookingDto {
   @IsUUID()
   hostelId: string;
 
+  @ApiProperty({ description: 'Deposit amount' })
+  @IsNumber()
+  depositAmount?: number = 0;
+
   @ApiProperty({ description: 'Room ID' })
   @IsUUID()
   roomId: string;

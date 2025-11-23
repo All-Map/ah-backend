@@ -1,4 +1,3 @@
-// booking.entity.ts
 import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, BeforeInsert, BeforeUpdate, OneToMany } from 'typeorm';
 import { Room } from './room.entity';
 import { Hostel } from './hostel.entity';
@@ -23,7 +22,7 @@ export enum PaymentStatus {
   PENDING = 'pending',
   PARTIAL = 'partial',
   PAID = 'paid',
-  REFUNDED = 'refunded',
+  CANCELLED = 'cancelled',
   OVERDUE = 'overdue'
 }
 
@@ -77,6 +76,12 @@ export class Booking {
   }})
   amountPaid: number;
 
+  @Column('decimal', { precision: 10, scale: 2, default: 0, name: 'deposit_amount', transformer: {
+    to: (value: number) => value,
+    from: (value: string) => parseFloat(value)
+  }})
+  depositAmount: number;
+
   @Column('decimal', { precision: 10, scale: 2, default: 0, name: 'amount_due', transformer: {
     to: (value: number) => value,
     from: (value: string) => parseFloat(value)
@@ -95,6 +100,12 @@ export class Booking {
 
   @Column('boolean', { default: false, name: 'booking_fee_paid' })
   bookingFeePaid: boolean;
+
+  @Column('timestamptz', { nullable: true, name: 'auto_cancel_at' })
+  autoCancelAt: Date;
+
+  @Column('boolean', { default: false, name: 'auto_cancel_notified' })
+  autoCancelNotified: boolean;
 
   @Column({ nullable: true, name: 'payment_reference' })
   paymentReference: string;
@@ -160,6 +171,38 @@ export class Booking {
   }
 
   // Helper methods
+
+  shouldAutoCancel(): boolean {
+    if (this.status !== BookingStatus.CONFIRMED) {
+      return false;
+    }
+
+    if (!this.autoCancelAt) {
+      return false;
+    }
+
+    // Check if current time is past auto-cancel deadline
+    return new Date() > this.autoCancelAt;
+  }
+
+  // Calculate required minimum payment (50% of semester fee)
+  getRequiredMinPayment(): number {
+    return this.totalAmount * 0.5; // 50% of semester fee
+  }
+
+  // Check if minimum payment requirement is met
+  hasMetMinPaymentRequirement(): boolean {
+    const minRequired = this.getRequiredMinPayment();
+    return this.amountPaid >= minRequired;
+  }
+
+  // Set auto-cancel deadline (7 days from creation)
+  setAutoCancelDeadline(): void {
+    const cancelDate = new Date(this.createdAt);
+    cancelDate.setDate(cancelDate.getDate() + 7);
+    this.autoCancelAt = cancelDate;
+  }
+
   getDurationInDays(): number {
     const checkIn = new Date(this.checkInDate);
     const checkOut = new Date(this.checkOutDate);
