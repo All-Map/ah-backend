@@ -13,6 +13,7 @@ import { RoomsModule } from './rooms/rooms.module';
 import { BookingsModule } from './bookings/booking.module';
 import { ReviewsModule } from './review/review.module';
 import { SchoolModule } from './school/school.module';
+import { PaymentsModule } from './payment/payments.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { SchoolModule } from './school/school.module';
     BookingsModule,
     ReviewsModule,
     SchoolModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [AppService, CloudinaryService],

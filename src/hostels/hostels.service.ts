@@ -497,6 +497,52 @@ async findByAdminId(adminId: string) {
     return this.roomsService.getRoomTypesByHostelId(hostelId);
   }
 
+  // Add this method to hostels.service.ts
+async getHostelContact(id: string) {
+  try {
+    console.log(`Fetching contact details for hostel: ${id}`);
+    
+    const { data, error } = await this.supabase.client
+      .from('hostels')
+      .select(`
+        name,
+        phone,
+        email,
+        SecondaryNumber,
+        admin_id,
+        users!hostels_admin_id_fkey(name, email, phone)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.error('Supabase getHostelContact error:', error);
+      throw new NotFoundException('Hostel not found');
+    }
+    
+    if (!data) {
+      throw new NotFoundException('Hostel not found');
+    }
+    
+    const adminInfo = data.users || {};
+    
+    return {
+      phone: data.phone,
+      email: data.email,
+      secondaryPhone: data.SecondaryNumber,
+    };
+    
+  } catch (error) {
+    console.error('Error in getHostelContact method:', error);
+    
+    if (error instanceof NotFoundException) {
+      throw error;
+    }
+    
+    throw new BadRequestException(`Failed to fetch contact details: ${error.message}`);
+  }
+}
+
   async removeImage(id: string, imageUrl: string) {
     try {
       const hostel = await this.findOne(id);

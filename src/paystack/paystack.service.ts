@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, BadRequestException, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
@@ -67,8 +67,21 @@ export interface PaystackVerificationResponse {
   };
 }
 
+export interface PaystackTransaction {
+  reference: string;
+  amount: number;
+  status: 'success' | 'failed' | 'abandoned';
+  gateway_response: string;
+  paid_at: string;
+  created_at: string;
+  customer: {
+    email: string;
+  };
+}
+
 @Injectable()
 export class PaystackService {
+  private readonly logger = new Logger(PaystackService.name);
   private readonly secretKey: string;
   private readonly baseUrl = 'https://api.paystack.co';
 
@@ -78,6 +91,24 @@ export class PaystackService {
       throw new Error('PAYSTACK_SECRET_KEY is not configured');
     }
     this.secretKey = secret;
+  }
+
+    async verifyTransaction(reference: string): Promise<PaystackTransaction> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/transaction/verify/${reference}`,
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+          },
+        }
+      );
+
+      return response.data.data;
+    } catch (error) {
+      this.logger.error('Paystack verification failed:', error.response?.data);
+      throw error;
+    }
   }
 
   /**
@@ -109,6 +140,16 @@ export class PaystackService {
     }
   }
 
+    validateWebhookSignature(payload: any, signature: string): boolean {
+    const crypto = require('crypto');
+    const hash = crypto
+      .createHmac('sha512', this.secretKey)
+      .update(JSON.stringify(payload))
+      .digest('hex');
+    
+    return hash === signature;
+  }
+
   /**
    * Validate payment amount and status
    * @param verification - Paystack verification response
@@ -134,6 +175,31 @@ export class PaystackService {
     }
 
     return true;
+  }
+
+    async initializeTransaction(data: {
+    email: string;
+    amount: number; // in pesewas (100 = 1 GHS)
+    reference: string;
+    callback_url: string;
+  }) {
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/transaction/initialize`,
+        data,
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      return response.data;
+    } catch (error) {
+      this.logger.error('Paystack initialization failed:', error.response?.data);
+      throw error;
+    }
   }
 
   /**

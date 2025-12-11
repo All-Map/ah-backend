@@ -64,12 +64,24 @@ async findUserHostels(@CurrentUser() user: any) {
     return this.hostelsService.findAll();
   }
 
-  // Optional: Add endpoint to get hostels for a specific admin (super admin only)
   @Get("admin/:adminId")
   @Roles(UserRole.SUPER_ADMIN)
   findHostelsByAdmin(@Param('adminId') adminId: string) {
     return this.hostelsService.findByAdminId(adminId);
   }
+
+  @Get(':id/contact')
+@ApiOperation({ summary: 'Get hostel contact details' })
+@ApiParam({ name: 'id', description: 'Hostel ID' })
+@ApiResponse({ 
+  status: HttpStatus.OK, 
+  description: 'Hostel contact details retrieved successfully'
+})
+async getHostelContact(
+  @Param('id', ParseUUIDPipe) id: string
+) {
+  return this.hostelsService.getHostelContact(id);
+}
 
   @Patch(':id/booking-status')
   @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
@@ -84,7 +96,6 @@ async findUserHostels(@CurrentUser() user: any) {
     @Body('acceptingBookings') acceptingBookings: boolean,
     @CurrentUser() user: any
   ) {
-    // Ensure user can only modify their own hostels (unless super admin)
     if (user.role !== UserRole.SUPER_ADMIN) {
       await this.hostelsService.verifyOwnership(id, user.id || user.sub);
     }
