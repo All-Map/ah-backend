@@ -12,7 +12,9 @@ import {
   ParseUUIDPipe,
   ValidationPipe,
   UsePipes,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -179,7 +181,6 @@ export class BookingManagementController {
     description: 'Booking deleted successfully',
   })
   async deleteBooking(@Param('id', ParseUUIDPipe) id: string) {
-    // Implementation would handle cancellation logic
     return await this.bookingService.updateBookingStatus(id, BookingStatus.CANCELLED, 'Admin deletion');
   }
 
@@ -187,6 +188,7 @@ export class BookingManagementController {
   @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
   @ApiOperation({ summary: 'Export bookings to CSV' })
   async exportBookings(
+    @Res() res: Response,
     @Query('hostelId') hostelId?: string,
     @Query('status') status?: string,
     @Query('paymentStatus') paymentStatus?: string,
@@ -194,7 +196,7 @@ export class BookingManagementController {
     @Query('checkInTo') checkInTo?: string,
     @Query('search') search?: string,
   ) {
-    return await this.bookingService.exportBookings({
+    const csv = await this.bookingService.exportBookings({
       hostelId,
       status: status as any,
       paymentStatus: paymentStatus as PaymentStatus,
@@ -202,5 +204,9 @@ export class BookingManagementController {
       checkInTo,
       search,
     });
+
+    res.header('Content-Type', 'text/csv');
+    res.header('Content-Disposition', `attachment; filename=bookings-${new Date().toISOString().split('T')[0]}.csv`);
+    return res.send(csv);
   }
 }

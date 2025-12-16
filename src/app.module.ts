@@ -17,6 +17,7 @@ import { PaymentsModule } from './payment/payments.module';
 import { AdminModule } from './admin/admin.module';
 import { UserManagementModule } from './admin/users/user-management.module';
 import { AccessManagementModule } from './admin/access/access-management.module';
+import { BookingManagementModule } from './admin/bookings/booking-management.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AccessManagementModule } from './admin/access/access-management.module'
     AdminModule,
     UserManagementModule,
     AccessManagementModule,
+    BookingManagementModule,
   ],
   controllers: [AppController],
   providers: [AppService, CloudinaryService],

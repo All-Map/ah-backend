@@ -154,7 +154,6 @@ export class BookingManagementService {
       .createQueryBuilder('booking')
       .leftJoinAndSelect('booking.hostel', 'hostel')
       .leftJoinAndSelect('booking.room', 'room')
-      .leftJoin('booking.user', 'user')
       .leftJoin('room.roomType', 'roomType')
       .select([
         'booking.id',
@@ -200,12 +199,6 @@ export class BookingManagementService {
         'roomType.pricePerSemester',
         'roomType.pricePerMonth',
         'roomType.pricePerWeek',
-        'user.id',
-        'user.name',
-        'user.email',
-        'user.phone',
-        'user.gender',
-        'user.school_id',
       ]);
 
     // Apply filters
