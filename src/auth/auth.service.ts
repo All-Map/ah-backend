@@ -85,7 +85,7 @@ async register(registerDto: RegisterDto): Promise<User> {
         password_hash: hashedPassword,
         verification_token: verificationToken,
         verification_token_expires_at: tokenExpiry.toISOString(),
-        is_verified: false,
+        is_verified: true,
         terms_accepted: registerDto.terms_accepted,
         terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
       };
@@ -167,7 +167,7 @@ async register(registerDto: RegisterDto): Promise<User> {
         gender: registerDto.gender || null,
         verification_token: verificationToken,
         verification_token_expires_at: tokenExpiry.toISOString(),
-        is_verified: false,
+        is_verified: true,
         onboarding_completed: false,
         terms_accepted: registerDto.terms_accepted,
         terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
