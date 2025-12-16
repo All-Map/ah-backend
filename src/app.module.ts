@@ -14,6 +14,9 @@ import { BookingsModule } from './bookings/booking.module';
 import { ReviewsModule } from './review/review.module';
 import { SchoolModule } from './school/school.module';
 import { PaymentsModule } from './payment/payments.module';
+import { AdminModule } from './admin/admin.module';
+import { UserManagementModule } from './admin/users/user-management.module';
+import { AccessManagementModule } from './admin/access/access-management.module';
 
 @Module({
   imports: [
@@ -27,6 +30,9 @@ import { PaymentsModule } from './payment/payments.module';
     ReviewsModule,
     SchoolModule,
     PaymentsModule,
+    AdminModule,
+    UserManagementModule,
+    AccessManagementModule,
   ],
   controllers: [AppController],
   providers: [AppService, CloudinaryService],
