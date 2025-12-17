@@ -18,6 +18,7 @@ import { AdminModule } from './admin/admin.module';
 import { UserManagementModule } from './admin/users/user-management.module';
 import { AccessManagementModule } from './admin/access/access-management.module';
 import { BookingManagementModule } from './admin/bookings/booking-management.module';
+import { FeedbackModule } from './feeedback/feedback.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { BookingManagementModule } from './admin/bookings/booking-management.mod
     UserManagementModule,
     AccessManagementModule,
     BookingManagementModule,
+    FeedbackModule,
   ],
   controllers: [AppController],
   providers: [AppService, CloudinaryService],
