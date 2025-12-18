@@ -41,7 +41,7 @@ export interface UserResponse {
   status: 'unverified' | 'pending' | 'verified';
   role: UserRole;
   school_id?: string;
-  verified_at?: Date;
+  created_at?: Date;
   onboarding_completed: boolean;
   terms_accepted: boolean;
   emergency_contact_name?: string;
@@ -91,7 +91,7 @@ export class UserManagementService {
       search,
       page = 1,
       limit = 20,
-      sortBy = 'verified_at',
+      sortBy = 'created_at',
       sortOrder = 'DESC',
     } = filterDto;
 
@@ -108,7 +108,7 @@ export class UserManagementService {
         'user.status',
         'user.role',
         'user.school_id',
-        'user.verified_at',
+        'user.created_at',
         'user.onboarding_completed',
         'user.terms_accepted',
         'user.emergency_contact_name',
@@ -204,9 +204,9 @@ export class UserManagementService {
       this.userRepository.count({ where: { status: 'pending' } }),
       this.userRepository.count({ where: { school_id: Not(IsNull()) } }),
       this.userRepository.count({ where: { school_id: IsNull() } }),
-      this.userRepository.count({ where: { verified_at: Between(today, new Date()) } }),
+      this.userRepository.count({ where: { created_at: Between(today, new Date()) } }),
       this.userRepository.count({ 
-        where: { verified_at: Between(thirtyDaysAgo, today) } 
+        where: { created_at: Between(thirtyDaysAgo, today) } 
       }),
     ]);
 
@@ -303,7 +303,7 @@ export class UserManagementService {
       password_hash: hashedPassword,
       verification_token: createUserDto.is_verified ? null : crypto.randomBytes(32).toString('hex'),
       verification_token_expires_at: createUserDto.is_verified ? null : new Date(Date.now() + 24 * 60 * 60 * 1000),
-      verified_at: createUserDto.is_verified ? new Date() : null,
+      created_at: createUserDto.is_verified ? new Date() : null,
       status: createUserDto.is_verified ? 'verified' : 'pending',
     };
 
@@ -334,7 +334,7 @@ export class UserManagementService {
       status: (savedUser as any).status,
       role: (savedUser as any).role,
       school_id: (savedUser as any).school_id,
-      verified_at: (savedUser as any).verified_at,
+      created_at: (savedUser as any).created_at,
       onboarding_completed: (savedUser as any).onboarding_completed,
       terms_accepted: (savedUser as any).terms_accepted,
       emergency_contact_name: (savedUser as any).emergency_contact_name,
@@ -386,8 +386,8 @@ export class UserManagementService {
     user.status = status;
     user.is_verified = status === 'verified';
 
-    if (status === 'verified' && !user.verified_at) {
-      user.verified_at = new Date();
+    if (status === 'verified' && !user.created_at) {
+      user.created_at = new Date();
     }
 
     const updatedUser = await this.userRepository.save(user);
@@ -566,7 +566,7 @@ export class UserManagementService {
       user.status,
       user.is_verified ? 'Yes' : 'No',
       user.school?.name || '',
-      user.verified_at ? new Date(user.verified_at).toISOString() : '',
+      user.created_at ? new Date(user.created_at).toISOString() : '',
       String(user.stats?.totalBookings || 0),
       String(user.stats?.activeBookings || 0),
       String(user.stats?.totalHostels || 0),

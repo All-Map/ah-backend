@@ -63,6 +63,9 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   terms_accepted_at: Date;
 
+  @Column({ type: 'timestamp', nullable: true })
+  created_at: Date;
+
   @Column({ nullable: true })
   school_id: string;
 

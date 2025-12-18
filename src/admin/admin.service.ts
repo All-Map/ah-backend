@@ -71,7 +71,7 @@ export class AdminService {
       payments,
     ] = await Promise.all([
       this.userRepository.count(),
-      this.userRepository.count({ where: { verified_at: MoreThan(yesterday) } }),
+      this.userRepository.count({ where: { created_at: MoreThan(yesterday) } }),
       this.hostelRepository.count(),
       this.hostelRepository.count({ where: { is_verified: true } }),
       this.bookingRepository.count(),
@@ -105,7 +105,7 @@ export class AdminService {
     // Get user growth
     const usersPreviousMonth = await this.userRepository.count({
       where: {
-        verified_at: Between(startOfPreviousMonth, endOfPreviousMonth)
+        created_at: Between(startOfPreviousMonth, endOfPreviousMonth)
       }
     });
     
@@ -146,7 +146,7 @@ export class AdminService {
 
     // Get recent users
     const recentUsers = await this.userRepository.find({
-      order: { verified_at: 'DESC' },
+      order: { created_at: 'DESC' },
       take: 5,
     });
 
@@ -156,7 +156,7 @@ export class AdminService {
         type: 'user',
         action: 'REGISTERED',
         description: `New user registered: ${user.name || user.email}`,
-        timestamp: user.verified_at,
+        timestamp: user.created_at,
         user: {
           id: user.id,
           name: user.name || 'Unnamed User',
@@ -236,10 +236,10 @@ export class AdminService {
       byRole,
     ] = await Promise.all([
       this.userRepository.count(),
-      this.userRepository.count({ where: { verified_at: MoreThan(startOfWeek) } }),
-      this.userRepository.count({ where: { verified_at: MoreThan(startOfMonth) } }),
+      this.userRepository.count({ where: { created_at: MoreThan(startOfWeek) } }),
+      this.userRepository.count({ where: { created_at: MoreThan(startOfMonth) } }),
       this.userRepository.count({ 
-        where: { verified_at: Between(startOfPreviousMonth, endOfPreviousMonth) } 
+        where: { created_at: Between(startOfPreviousMonth, endOfPreviousMonth) } 
       }),
       this.userRepository
         .createQueryBuilder('user')

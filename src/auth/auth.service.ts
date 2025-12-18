@@ -88,6 +88,7 @@ async register(registerDto: RegisterDto): Promise<User> {
         is_verified: true,
         terms_accepted: registerDto.terms_accepted,
         terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
+        created_at: registerDto.created_at ? registerDto.created_at.toISOString() : new Date().toISOString(),
       };
 
       let user;
@@ -171,6 +172,7 @@ async register(registerDto: RegisterDto): Promise<User> {
         onboarding_completed: false,
         terms_accepted: registerDto.terms_accepted,
         terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
+        created_at: registerDto.created_at ? registerDto.created_at.toISOString() : new Date().toISOString(),
       };
 
       let user;

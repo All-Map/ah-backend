@@ -42,6 +42,9 @@ export class RegisterDto {
   terms_accepted_at?: Date;
 
   @IsOptional()
+  created_at?: Date;
+
+  @IsOptional()
   @IsString()
   emergency_contact_name?: string;
 

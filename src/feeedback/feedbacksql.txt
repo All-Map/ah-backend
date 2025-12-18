@@ -1,0 +1,157 @@
+-- Run this in the Supabase SQL Editor
+CREATE TABLE public.feedback (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  subject TEXT NOT NULL,
+  message TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'general',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create an index for faster queries
+CREATE INDEX idx_feedback_user_id ON public.feedback(user_id);
+CREATE INDEX idx_feedback_created_at ON public.feedback(created_at DESC);
+
+-- (Optional but recommended) Add Row Level Security (RLS) and policies
+ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
+
+-- Policy to allow users to insert their own feedback
+CREATE POLICY "Users can insert their own feedback"
+  ON public.feedback FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+-- Policy to allow users to view their own feedback
+CREATE POLICY "Users can view their own feedback"
+  ON public.feedback FOR SELECT
+  USING (auth.uid() = user_id);
+
+  -- Create function to get category counts
+CREATE OR REPLACE FUNCTION get_feedback_category_counts()
+RETURNS TABLE(category text, count bigint) 
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT f.category, COUNT(*)::bigint as count
+  FROM feedback f
+  GROUP BY f.category
+  ORDER BY count DESC;
+END;
+$$;
+
+-- Create public feedback table
+-- 1. Create the public_feedback table
+CREATE TABLE IF NOT EXISTS public.public_feedback (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  message TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'general',
+  status TEXT NOT NULL DEFAULT 'pending',
+  admin_notes TEXT,
+  ip_address VARCHAR(45),
+  user_agent TEXT,
+  responded BOOLEAN DEFAULT FALSE,
+  responded_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  user_id UUID REFERENCES public.users(id) ON DELETE SET NULL
+);
+
+-- 2. Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_public_feedback_created_at 
+ON public.public_feedback(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_public_feedback_status 
+ON public.public_feedback(status);
+
+CREATE INDEX IF NOT EXISTS idx_public_feedback_email 
+ON public.public_feedback(email);
+
+CREATE INDEX IF NOT EXISTS idx_public_feedback_category 
+ON public.public_feedback(category);
+
+CREATE INDEX IF NOT EXISTS idx_public_feedback_responded 
+ON public.public_feedback(responded);
+
+-- 3. Create function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_public_feedback_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 4. Create trigger for automatic updated_at
+DROP TRIGGER IF EXISTS trigger_update_public_feedback_updated_at ON public.public_feedback;
+CREATE TRIGGER trigger_update_public_feedback_updated_at
+BEFORE UPDATE ON public.public_feedback
+FOR EACH ROW
+EXECUTE FUNCTION update_public_feedback_updated_at();
+
+-- 5. Enable Row Level Security (RLS)
+ALTER TABLE public.public_feedback ENABLE ROW LEVEL SECURITY;
+
+-- 6. Create policies
+-- Allow public to insert feedback (no authentication required)
+DROP POLICY IF EXISTS "Allow public to insert feedback" ON public.public_feedback;
+CREATE POLICY "Allow public to insert feedback"
+ON public.public_feedback FOR INSERT
+WITH CHECK (true);
+
+-- Allow authenticated users to view their own feedback if they have a user_id
+DROP POLICY IF EXISTS "Users can view their own feedback" ON public.public_feedback;
+CREATE POLICY "Users can view their own feedback"
+ON public.public_feedback FOR SELECT
+USING (auth.uid() = user_id);
+
+-- Allow super admins to view all public feedback
+DROP POLICY IF EXISTS "Super admins can view all public feedback" ON public.public_feedback;
+CREATE POLICY "Super admins can view all public feedback"
+ON public.public_feedback FOR SELECT
+USING (auth.role() = 'authenticated' AND 
+       EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'super_admin'));
+
+-- Allow super admins to update public feedback
+DROP POLICY IF EXISTS "Super admins can update public feedback" ON public.public_feedback;
+CREATE POLICY "Super admins can update public feedback"
+ON public.public_feedback FOR UPDATE
+USING (auth.role() = 'authenticated' AND 
+       EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'super_admin'));
+
+-- 7. Create stats view
+CREATE OR REPLACE VIEW public.public_feedback_stats AS
+SELECT 
+  COUNT(*) as total,
+  COUNT(*) FILTER (WHERE status = 'pending') as pending,
+  COUNT(*) FILTER (WHERE status = 'reviewed') as reviewed,
+  COUNT(*) FILTER (WHERE status = 'resolved') as resolved,
+  COUNT(*) FILTER (WHERE status = 'archived') as archived,
+  COUNT(*) FILTER (WHERE responded = true) as responded,
+  COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as today,
+  COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('week', CURRENT_DATE)) as this_week,
+  COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE)) as this_month,
+  AVG(EXTRACT(EPOCH FROM (responded_at - created_at)) / 3600) 
+    FILTER (WHERE responded_at IS NOT NULL) as avg_response_hours
+FROM public.public_feedback;
+
+-- 8. Create function to get category counts
+CREATE OR REPLACE FUNCTION get_public_feedback_category_counts()
+RETURNS TABLE(category text, count bigint) 
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT f.category, COUNT(*)::bigint as count
+  FROM public.public_feedback f
+  GROUP BY f.category
+  ORDER BY count DESC;
+END;
+$$;
+
+-- 9. Refresh PostgREST schema cache
+NOTIFY pgrst, 'reload schema';
