@@ -109,14 +109,14 @@ This project includes comprehensive professional documentation. **Start here:**
 
 | Document                                                         | Purpose                                    | Best For                          |
 | ---------------------------------------------------------------- | ------------------------------------------ | --------------------------------- |
-| [START_HERE.md](START_HERE.md)                                   | **Quick navigation & onboarding**          | New team members, quick reference |
+| [QUICK_REFERENCE.md](QUICK_REFERENCE.md)                         | **Quick navigation & onboarding**          | New team members, quick reference |
 | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md)           | System design, ERD, module architecture    | Understanding the system design   |
 | [QUICK_REFERENCE.md](QUICK_REFERENCE.md)                         | Cheat sheet, commands, endpoints           | Daily development work            |
 | [API_INTEGRATION_GUIDE.md](API_INTEGRATION_GUIDE.md)             | 50+ cURL examples, workflow examples       | Building frontend or integrations |
 | [DEPLOYMENT_OPERATIONS_GUIDE.md](DEPLOYMENT_OPERATIONS_GUIDE.md) | Docker, Kubernetes, CI/CD, troubleshooting | DevOps & deployment teams         |
 | [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)                 | Master navigation guide                    | Finding specific information      |
 
-**👉 New to the project?** Start with [START_HERE.md](START_HERE.md)
+**👉 New to the project?** Start with [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
 
 ---
 
@@ -362,7 +362,7 @@ This project is proprietary software. All rights reserved.
 
 Refer to project documentation in order:
 
-1. [START_HERE.md](START_HERE.md) - Quick navigation
+1. [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - Quick navigation
 2. [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - Common tasks
 3. [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md) - System design
 4. [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md) - Find specific topics
