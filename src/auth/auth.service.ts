@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -9,6 +9,8 @@ import { User } from 'src/entities/user.entity';
 import * as bcrypt from 'bcrypt';
 import { MailService } from 'src/mail/mail.service';
 import { OnboardingDto } from 'src/obboarding/dto/onboarding.dto';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 export interface UserDetails {
   id: string;
@@ -36,7 +38,7 @@ export interface UserDetails {
 
 @Injectable()
 export class AuthService {
-  constructor(
+  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
@@ -622,15 +624,20 @@ async resetPassword(dto: ResetPasswordDto) {
 // In your AuthService.getUserProfile method, add logging to debug:
 
 async getUserProfile(userId: string): Promise<UserDetails> {
+
+  const cacheKey = `user_profile:${userId}`;
+  const cachedProfile = await this.cacheManager.get<UserDetails>(cacheKey);
+  if (cachedProfile) {
+    console.log('Returning cached profile for user:', userId);
+    return cachedProfile;
+  }
+
   // Step 1: Get user data
   const { data: user, error: userError } = await this.supabase.client
     .from('users')
     .select('id, name, email, phone, gender, is_verified, role, school_id, terms_accepted, terms_accepted_at, onboarding_completed, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, emergency_contact_email')
     .eq('id', userId)
     .single();
-
-  console.log('Database user data:', user); // Add this debug line
-  console.log('User gender from DB:', user?.gender); // Add this debug line
 
   if (userError || !user) {
     console.error('User fetch error:', userError);
@@ -682,7 +689,9 @@ async getUserProfile(userId: string): Promise<UserDetails> {
     emergency_contact_email: user.emergency_contact_email,
   };
 
-  console.log('Final profile object:', profile); // Add this debug line
+  // Cache the profile for future requests
+  await this.cacheManager.set(cacheKey, profile, 300); // Cache for 5 minutes
+
   console.log('Final profile gender:', profile.gender); // Add this debug line
 
   return profile;

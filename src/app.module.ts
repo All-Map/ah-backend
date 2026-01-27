@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { CacheModule } from '@nestjs/cache-manager';
 import helmet from 'helmet';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -21,9 +22,19 @@ import { AccessManagementModule } from './admin/access/access-management.module'
 import { BookingManagementModule } from './admin/bookings/booking-management.module';
 import { FeedbackModule } from './feeedback/feedback.module';
 import { APP_FILTER } from '@nestjs/core';
+import { redisStore } from 'cache-manager-redis-store';
 
 @Module({
   imports: [
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: async () => ({
+        store: redisStore,
+        host: process.env.REDIS_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT) || 6379,
+        ttl: 60, // default TTL in seconds
+      }),
+    }),
     SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60, limit: 100 }]),

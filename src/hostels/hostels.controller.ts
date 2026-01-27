@@ -12,9 +12,11 @@ import { ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { RoomType } from 'src/entities/room-type.entity';
 import { RoomsService } from 'src/rooms/rooms.service';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
 
 @Controller('hostels')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@UseInterceptors(CacheInterceptor)
 export class HostelsController {
   constructor(private readonly hostelsService: HostelsService, private readonly roomsService: RoomsService) {}
 
@@ -59,7 +61,8 @@ async findUserHostels(@CurrentUser() user: any) {
 
   // Optional: Add a separate endpoint for super admins to get all hostels
   @Get("all")
-  // @Roles(UserRole.SUPER_ADMIN)
+  @CacheKey('all_hostels')
+  @CacheTTL(30) // Cache for 30 seconds
   findAllHostels() {
     return this.hostelsService.findAll();
   }
@@ -176,6 +179,8 @@ async getRoomTypeByIdStudent(
 }
 
   @Get(':id')
+  @CacheKey('hostel_' + ':id')
+  @CacheTTL(30) // Cache for 30 seconds
   findOne(@Param('id') id: string) {
     return this.hostelsService.findOne(id);
   }

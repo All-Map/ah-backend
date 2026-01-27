@@ -1,4 +1,7 @@
-import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Patch, BadRequestException, Req } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Patch, BadRequestException, Req,
+  UseInterceptors
+ } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL, CacheKey } from '@nestjs/cache-manager';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -14,6 +17,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OnboardingDto } from 'src/obboarding/dto/onboarding.dto';
 
 @Controller('auth')
+@UseInterceptors(CacheInterceptor)
 export class AuthController {
   constructor(private readonly authService: AuthService, private readonly profileService: ProfileService) {};
 
@@ -41,6 +45,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('user-profile')
+  @CacheTTL(300) // Cache for 5 minutes
   async getUserProfile(@CurrentUser() user: User) {
     try {
       return await this.authService.getUserProfile(user.id);
