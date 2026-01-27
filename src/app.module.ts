@@ -13,15 +13,18 @@ import { RoomsModule } from './rooms/rooms.module';
 import { BookingsModule } from './bookings/booking.module';
 import { ReviewsModule } from './review/review.module';
 import { SchoolModule } from './school/school.module';
+import { SentryGlobalFilter, SentryModule } from '@sentry/nestjs/setup';
 import { PaymentsModule } from './payment/payments.module';
 import { AdminModule } from './admin/admin.module';
 import { UserManagementModule } from './admin/users/user-management.module';
 import { AccessManagementModule } from './admin/access/access-management.module';
 import { BookingManagementModule } from './admin/bookings/booking-management.module';
 import { FeedbackModule } from './feeedback/feedback.module';
+import { APP_FILTER } from '@nestjs/core';
 
 @Module({
   imports: [
+    SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60, limit: 100 }]),
     TypeOrmModule.forRootAsync(typeOrmConfig),
@@ -39,7 +42,12 @@ import { FeedbackModule } from './feeedback/feedback.module';
     FeedbackModule,
   ],
   controllers: [AppController],
-  providers: [AppService, CloudinaryService],
+  providers: [
+    {
+    provide: APP_FILTER,
+    useClass: SentryGlobalFilter,
+  },
+    AppService, CloudinaryService],
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
