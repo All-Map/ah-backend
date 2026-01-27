@@ -9,4 +9,9 @@ export class AppController {
   getHello(): string {
     return this.appService.getHello();
   }
+
+  @Get("/debug-sentry")
+  getEEror() {
+  throw new Error("My first Sentry error!");
+  }
 }
