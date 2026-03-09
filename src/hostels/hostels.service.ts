@@ -243,6 +243,68 @@ async findByAdminId(adminId: string) {
     }
   }
 
+  async findPublicHostels() {
+    const { data, error } = await this.supabase.client
+      .from('hostels')
+      .select(`
+        id,
+        name,
+        description,
+        address,
+        location,
+        images,
+        amenities,
+        rating,
+        total_reviews
+      `)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new BadRequestException(`Database error: ${error.message}`);
+    }
+
+    return data || [];
+  }
+
+  async findPublicHostelById(id: string) {
+    const { data, error } = await this.supabase.client
+      .from('hostels')
+      .select(`
+        id,
+        name,
+        description,
+        address,
+        location,
+        images,
+        amenities,
+        base_price,
+        payment_method,
+        bank_details,
+        momo_details,
+        max_occupancy,
+        house_rules,
+        nearby_facilities,
+        check_in_time,
+        check_out_time,
+        rating,
+        total_reviews
+      `)
+      .eq('id', id)
+      .eq('is_active', true)
+      .single();
+
+    if (error) {
+      throw new NotFoundException(`Hostel not found: ${error.message}`);
+    }
+
+    if (!data) {
+      throw new NotFoundException('Hostel not found');
+    }
+
+    return data;
+  }
+
   // Keep the original findAll method for super admins
   async findAll() {
     try {

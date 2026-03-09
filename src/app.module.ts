@@ -23,6 +23,7 @@ import { BookingManagementModule } from './admin/bookings/booking-management.mod
 import { FeedbackModule } from './feeedback/feedback.module';
 import { APP_FILTER } from '@nestjs/core';
 import { redisStore } from 'cache-manager-redis-store';
+import { PublicModule } from './public/public.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { redisStore } from 'cache-manager-redis-store';
     AccessManagementModule,
     BookingManagementModule,
     FeedbackModule,
+    PublicModule
   ],
   controllers: [AppController],
   providers: [
