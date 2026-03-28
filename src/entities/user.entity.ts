@@ -69,6 +69,12 @@ export class User {
   @Column({ nullable: true })
   school_id: string;
 
+  @Column({ nullable: true })
+  google_id: string;
+
+  @Column({ type: 'int', default: 1 })
+  last_onboarding_step: number;
+
   // Emergency Contact Fields
   @Column({ nullable: true })
   emergency_contact_name: string;

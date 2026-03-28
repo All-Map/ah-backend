@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from 'src/entities/user.entity';
+import { GoogleStrategy } from './strategies/google.strategy';
 import { MailModule } from 'src/mail/mail.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AdminVerification } from 'src/entities/admin-verification.entity';
@@ -36,6 +37,7 @@ import { ProfileModule } from 'src/profile/profile.module';
   providers: [
     AuthService,
     JwtStrategy,
+    GoogleStrategy,
     AdminVerificationService, // <-- move here
     FileUploadService,
   ],

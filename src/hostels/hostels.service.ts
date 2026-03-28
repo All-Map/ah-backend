@@ -48,7 +48,8 @@ async verifyOwnership(hostelId: string, userId: string): Promise<void> {
     if (error instanceof NotFoundException || error instanceof ForbiddenException) {
       throw error;
     }
-    throw new BadRequestException(`Failed to verify ownership: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Failed to verify ownership: ${errorMessage}`);
   }
 }
 
@@ -78,7 +79,8 @@ async findByAdminId(adminId: string) {
     if (error instanceof BadRequestException) {
       throw error;
     }
-    throw new BadRequestException(`Failed to fetch hostels: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Failed to fetch hostel: ${errorMessage}`);
   }
 }
 
@@ -105,7 +107,8 @@ async findByAdminId(adminId: string) {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      throw new BadRequestException(`Failed to fetch hostel: ${error.message}`);
+         const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Failed to fetch hostel: ${errorMessage}`);
     }
   }
 
@@ -176,7 +179,8 @@ async findByAdminId(adminId: string) {
             console.log('Uploaded image:', url);
           } catch (uploadError) {
             console.error('Failed to upload image:', uploadError);
-            throw new BadRequestException(`Failed to upload image: ${uploadError.message}`);
+            const errorMessage = uploadError instanceof Error ? uploadError.message : String(uploadError);
+            throw new BadRequestException(`Failed to upload image: ${errorMessage}`);
           }
         }
       }
@@ -239,7 +243,8 @@ async findByAdminId(adminId: string) {
         throw error;
       }
       
-      throw new BadRequestException(`Failed to create hostel: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Failed to create hostel: ${errorMessage}`);
     }
   }
 
@@ -381,8 +386,8 @@ async findByAdminId(adminId: string) {
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
-      
-      throw new BadRequestException(`Failed to toggle booking status: ${error.message}`);
+       const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Failed to toggle booking status: ${errorMessage}`);
     }
   }
 
@@ -399,7 +404,9 @@ async findByAdminId(adminId: string) {
             imageUpdates.push(url);
           } catch (uploadError) {
             console.error('Failed to upload image during update:', uploadError);
-            throw new BadRequestException(`Failed to upload image: ${uploadError.message}`);
+                   
+            const errorMessage = uploadError instanceof Error ? uploadError.message : String(uploadError);
+            throw new BadRequestException(`Failed to upload image: ${errorMessage}`);
           }
         }
       }
@@ -532,7 +539,8 @@ async findByAdminId(adminId: string) {
         throw error;
       }
       
-      throw new BadRequestException(`Failed to update hostel: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Failed to update hostel: ${errorMessage}`);
     }
   }
 
@@ -601,7 +609,8 @@ async getHostelContact(id: string) {
       throw error;
     }
     
-    throw new BadRequestException(`Failed to fetch contact details: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Failed to fetch contact details: ${errorMessage}`);
   }
 }
 

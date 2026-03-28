@@ -58,6 +58,64 @@ export class AuthService {
     return isValid ? user : null;
   }
 
+  async validateGoogleUser(googleUser: any): Promise<User> {
+    const { email, google_id, name } = googleUser;
+
+    // Check if user exists
+    const { data: existingUser, error: findError } = await this.supabase
+      .client
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (existingUser) {
+      // If user exists but doesn't have google_id, update it
+      if (!existingUser.google_id) {
+        const { data: updatedUser, error: updateError } = await this.supabase
+          .client
+          .from('users')
+          .update({ google_id })
+          .eq('id', existingUser.id)
+          .select('*')
+          .single();
+        
+        if (updateError) {
+          console.error('Supabase update error:', updateError);
+          throw new InternalServerErrorException(`Failed to update user with Google ID: ${updateError.message}`);
+        }
+        return updatedUser;
+      }
+      return existingUser;
+    }
+
+    // Create new user
+    const userData = {
+      email,
+      google_id,
+      name,
+      role: 'student',
+      is_verified: true, // Google emails are verified
+      onboarding_completed: false,
+      created_at: new Date().toISOString(),
+      status: 'verified',
+    };
+
+    const { data: newUser, error: createError } = await this.supabase
+      .client
+      .from('users')
+      .insert([userData])
+      .select('*')
+      .single();
+
+    if (createError) {
+      console.error('Failed to create Google user:', createError);
+      throw new InternalServerErrorException('Failed to create user from Google profile');
+    }
+
+    return newUser;
+  }
+
 async register(registerDto: RegisterDto): Promise<User> {
     try {
       // Check if terms are accepted
@@ -223,38 +281,57 @@ async register(registerDto: RegisterDto): Promise<User> {
 
   async completeOnboarding(userId: string, onboardingDto: OnboardingDto): Promise<UserDetails> {
     try {
-      // Verify school exists
-      const { data: school, error: schoolError } = await this.supabase
-        .client
-        .from('schools')
+      const updateData: any = { ...onboardingDto };
+      
+      // If school_id is provided, verify it
+      if (onboardingDto.school_id) {
+        const { data: school, error: schoolError } = await this.supabase
+          .client
+          .from('schools')
+          .select('*')
+          .eq('id', onboardingDto.school_id)
+          .single();
+
+        if (schoolError || !school) {
+          throw new BadRequestException('Invalid school selected');
+        }
+      }
+
+      // Check current completion status
+      const { data: currentUser } = await this.supabase.client
+        .from('users')
         .select('*')
-        .eq('id', onboardingDto.school_id)
+        .eq('id', userId)
         .single();
 
-      if (schoolError || !school) {
-        throw new BadRequestException('Invalid school selected');
+      const mergedData = { ...currentUser, ...updateData };
+      const isComplete = !!(
+        mergedData.name &&
+        mergedData.phone &&
+        mergedData.gender &&
+        mergedData.school_id &&
+        mergedData.emergency_contact_name &&
+        mergedData.emergency_contact_phone &&
+        mergedData.emergency_contact_relationship
+      );
+
+      if (isComplete) {
+        updateData.onboarding_completed = true;
+        updateData.status = 'verified';
       }
 
       // Update user with onboarding data
       const { data: updatedUser, error: updateError } = await this.supabase
         .client
         .from('users')
-        .update({
-          school_id: onboardingDto.school_id,
-          emergency_contact_name: onboardingDto.emergency_contact_name,
-          emergency_contact_phone: onboardingDto.emergency_contact_phone,
-          emergency_contact_relationship: onboardingDto.emergency_contact_relationship,
-          emergency_contact_email: onboardingDto.emergency_contact_email || null,
-          onboarding_completed: true,
-          status: 'verified',
-        })
+        .update(updateData)
         .eq('id', userId)
         .select('*')
         .single();
 
       if (updateError) {
         console.error('Onboarding update error:', updateError);
-        throw new InternalServerErrorException('Failed to complete onboarding');
+        throw new InternalServerErrorException('Failed to update onboarding progress');
       }
 
       return this.getUserProfile(userId);
@@ -373,10 +450,14 @@ async register(registerDto: RegisterDto): Promise<User> {
     }
   }
 
-  async login(user: User, inputPassword: string) {
+  async login(user: User, inputPassword?: string) {
     try {
-      const isMatch = await bcrypt.compare(inputPassword, user.password_hash);
-      if (!isMatch) {
+      if (inputPassword) {
+        const isMatch = await bcrypt.compare(inputPassword, user.password_hash);
+        if (!isMatch) {
+          throw new UnauthorizedException('Invalid credentials');
+        }
+      } else if (!user.google_id) {
         throw new UnauthorizedException('Invalid credentials');
       }
 

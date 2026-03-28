@@ -1,5 +1,5 @@
 import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Patch, BadRequestException, Req,
-  UseInterceptors
+  UseInterceptors, Res
  } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL, CacheKey } from '@nestjs/cache-manager';
 import { Request } from 'express';
@@ -15,6 +15,8 @@ import { RolesGuard } from './guards/roles.guard';
 import { ProfileService } from 'src/profile/profile.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OnboardingDto } from 'src/obboarding/dto/onboarding.dto';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
+import { Response } from 'express';
 
 @Controller('auth')
 @UseInterceptors(CacheInterceptor)
@@ -77,6 +79,23 @@ export class AuthController {
       }
       throw new UnauthorizedException('Login failed. Please try again.');
     }
+  }
+
+  @Get('google')
+  @UseGuards(GoogleAuthGuard)
+  async googleAuth(@Req() req) {}
+
+  @Get('google/callback')
+  @UseGuards(GoogleAuthGuard)
+  async googleAuthRedirect(@Req() req, @Res() res: Response) {
+    const user = req.user as User;
+    const result = await this.authService.login(user);
+    
+    // Redirect to frontend with token and user info
+    // Ensure frontendUrl doesn't have a trailing slash for consistency
+    const baseUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const redirectUrl = `${baseUrl}/auth/callback?token=${result.access_token}&user=${encodeURIComponent(JSON.stringify(result.user))}`;
+    return res.redirect(redirectUrl);
   }
 
   @UseGuards(JwtAuthGuard)
