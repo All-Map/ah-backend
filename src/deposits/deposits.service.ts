@@ -1,37 +1,48 @@
-import { Injectable, NotFoundException, BadRequestException, InternalServerErrorException, ConflictException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
-import { Deposit, DepositStatus, DepositType } from '../entities/deposit.entity';
-import { User } from '../entities/user.entity';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
+import {
+  Deposit,
+  DepositStatus,
+  DepositType,
+  PaymentMethodEnum,
+  PaymentTypeEnum,
+  PaymentStatusEnum,
+  Prisma,
+} from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateDepositDto, VerifyDepositDto, DepositFilterDto, ApplyDepositToBookingDto } from './dto/deposit.dto';
 import { PaystackService, PaystackVerificationResponse } from '../paystack/paystack.service';
-import { Booking, PaymentStatus } from '../entities/booking.entity';
-import { Payment, PaymentMethod, PaymentType } from '../entities/payment.entity';
+
+function canRefundDeposit(deposit: Deposit): boolean {
+  if (deposit.status !== DepositStatus.completed || !deposit.paymentDate) {
+    return false;
+  }
+  const expired = deposit.expiresAt ? new Date() > deposit.expiresAt : false;
+  if (expired) return false;
+  return new Date().getTime() - deposit.paymentDate.getTime() <= 30 * 24 * 60 * 60 * 1000;
+}
 
 @Injectable()
 export class DepositsService {
   constructor(
-    @InjectRepository(Deposit)
-    private readonly depositRepository: Repository<Deposit>,
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-    @InjectRepository(Booking)
-    private readonly bookingRepository: Repository<Booking>,
-    private readonly dataSource: DataSource,
+    private readonly prisma: PrismaService,
     private readonly paystackService: PaystackService,
   ) {}
 
   async createDeposit(createDepositDto: CreateDepositDto, userId: string): Promise<Deposit> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Check for existing pending deposit with same reference
-    const existingDeposit = await this.depositRepository.findOne({
+    const existingDeposit = await this.prisma.deposit.findFirst({
       where: {
         paymentReference: createDepositDto.paymentReference,
-        status: DepositStatus.PENDING,
+        status: DepositStatus.pending,
       },
     });
 
@@ -39,127 +50,136 @@ export class DepositsService {
       throw new ConflictException('A deposit with this payment reference is already being processed');
     }
 
-    const deposit = this.depositRepository.create({
-      ...createDepositDto,
-      userId,
-      status: DepositStatus.PENDING,
+    return this.prisma.deposit.create({
+      data: {
+        userId,
+        status: DepositStatus.pending,
+        amount: new Prisma.Decimal(createDepositDto.amount),
+        depositType: createDepositDto.depositType ?? DepositType.account_credit,
+        paymentReference: createDepositDto.paymentReference,
+        notes: createDepositDto.notes,
+      },
     });
-
-    return await this.depositRepository.save(deposit);
   }
 
   async verifyDeposit(verifyDepositDto: VerifyDepositDto): Promise<{ deposit: Deposit; verified: boolean }> {
     const { reference, expectedAmount } = verifyDepositDto;
 
-    // Find the deposit
-    const deposit = await this.depositRepository.findOne({
+    const deposit = await this.prisma.deposit.findFirst({
       where: { paymentReference: reference },
-      relations: ['user'],
+      include: { user: true },
     });
 
     if (!deposit) {
       throw new NotFoundException('Deposit not found');
     }
 
-    if (deposit.status === DepositStatus.COMPLETED) {
+    if (deposit.status === DepositStatus.completed) {
       return { deposit, verified: true };
     }
 
-    if (deposit.status === DepositStatus.FAILED) {
+    if (deposit.status === DepositStatus.failed) {
       throw new BadRequestException('This deposit has failed and cannot be verified');
     }
 
-    // Verify with Paystack
     let verification: PaystackVerificationResponse;
     try {
       verification = await this.paystackService.verifyPayment(reference);
       this.paystackService.validatePayment(verification, expectedAmount);
-    } catch (error) {
-      // Mark as failed if verification fails
-      deposit.status = DepositStatus.FAILED;
-      deposit.notes = `Verification failed: ${error.message}`;
-      await this.depositRepository.save(deposit);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      await this.prisma.deposit.update({
+        where: { id: deposit.id },
+        data: {
+          status: DepositStatus.failed,
+          notes: `Verification failed: ${message}`,
+        },
+      });
       throw error;
     }
 
-    // Update deposit with successful payment details
-    return await this.dataSource.transaction(async manager => {
-      deposit.status = DepositStatus.COMPLETED;
-      deposit.amount = verification.data.amount / 100; // Update with actual amount paid
-      deposit.paystackReference = verification.data.reference;
-      deposit.transactionId = verification.data.id.toString();
-      deposit.paymentDate = new Date(verification.data.paid_at);
-      deposit.verifiedAt = new Date();
-      deposit.paymentDetails = {
-        channel: verification.data.channel,
-        currency: verification.data.currency,
-        customer: verification.data.customer,
-        authorization: verification.data.authorization,
-      };
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.deposit.update({
+        where: { id: deposit.id },
+        data: {
+          status: DepositStatus.completed,
+          amount: new Prisma.Decimal(verification.data.amount / 100),
+          paystackReference: verification.data.reference,
+          transactionId: verification.data.id.toString(),
+          paymentDate: new Date(verification.data.paid_at),
+          verifiedAt: new Date(),
+          paymentDetails: {
+            channel: verification.data.channel,
+            currency: verification.data.currency,
+            customer: verification.data.customer,
+            authorization: verification.data.authorization,
+          } as Prisma.InputJsonValue,
+        },
+      });
 
-      const updatedDeposit = await manager.save(Deposit, deposit);
-
-      return { deposit: updatedDeposit, verified: true };
+      return { deposit: updated, verified: true };
     });
   }
 
-  // In deposits.service.ts - add this method
-async canPayBookingFeeFromDeposit(userId: string): Promise<{ 
-  canPay: boolean; 
-  availableBalance: number;
-  requiredAmount: number;
-  difference?: number;
-}> {
-  const balance = await this.getUserDepositBalance(userId);
-  const requiredAmount = 70; // GHS 70 booking fee
-  
-  const canPay = balance.availableBalance >= requiredAmount;
-  const result: any = {
-    canPay,
-    availableBalance: balance.availableBalance,
-    requiredAmount
-  };
-  
-  if (!canPay) {
-    result.difference = requiredAmount - balance.availableBalance;
-  }
-  
-  return result;
-}
+  async canPayBookingFeeFromDeposit(userId: string): Promise<{
+    canPay: boolean;
+    availableBalance: number;
+    requiredAmount: number;
+    difference?: number;
+  }> {
+    const balance = await this.getUserDepositBalance(userId);
+    const requiredAmount = 70;
 
-  async getUserDeposits(userId: string, filterDto: DepositFilterDto = {}): Promise<{ deposits: Deposit[]; total: number }> {
+    const canPay = balance.availableBalance >= requiredAmount;
+    const result: {
+      canPay: boolean;
+      availableBalance: number;
+      requiredAmount: number;
+      difference?: number;
+    } = {
+      canPay,
+      availableBalance: balance.availableBalance,
+      requiredAmount,
+    };
+
+    if (!canPay) {
+      result.difference = requiredAmount - balance.availableBalance;
+    }
+
+    return result;
+  }
+
+  async getUserDeposits(
+    userId: string,
+    filterDto: DepositFilterDto = {},
+  ): Promise<{ deposits: Deposit[]; total: number }> {
     const { page = 1, limit = 10, status, depositType, startDate, endDate } = filterDto;
 
-    const query = this.depositRepository
-      .createQueryBuilder('deposit')
-      .where('deposit.userId = :userId', { userId })
-      .orderBy('deposit.createdAt', 'DESC');
-
-    if (status) {
-      query.andWhere('deposit.status = :status', { status });
-    }
-
-    if (depositType) {
-      query.andWhere('deposit.depositType = :depositType', { depositType });
-    }
-
+    const where: Prisma.DepositWhereInput = { userId };
+    if (status) where.status = status;
+    if (depositType) where.depositType = depositType;
     if (startDate && endDate) {
-      query.andWhere('deposit.createdAt BETWEEN :startDate AND :endDate', {
-        startDate,
-        endDate: new Date(new Date(endDate).getTime() + 24 * 60 * 60 * 1000), // Include end date
-      });
+      where.createdAt = {
+        gte: startDate,
+        lte: new Date(new Date(endDate).getTime() + 24 * 60 * 60 * 1000),
+      };
     }
 
-    const [deposits, total] = await query
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getManyAndCount();
+    const [deposits, total] = await Promise.all([
+      this.prisma.deposit.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.deposit.count({ where }),
+    ]);
 
     return { deposits, total };
   }
 
-  async getUserDepositBalance(userId: string): Promise<{ 
-    totalBalance: number; 
+  async getUserDepositBalance(userId: string): Promise<{
+    totalBalance: number;
     availableBalance: number;
     pendingDeposits: number;
     depositBreakdown: {
@@ -168,13 +188,11 @@ async canPayBookingFeeFromDeposit(userId: string): Promise<{
       failed: number;
     };
   }> {
-    const deposits = await this.depositRepository
-      .createQueryBuilder('deposit')
-      .select('deposit.status', 'status')
-      .addSelect('SUM(deposit.amount)', 'total')
-      .where('deposit.userId = :userId', { userId })
-      .groupBy('deposit.status')
-      .getRawMany();
+    const grouped = await this.prisma.deposit.groupBy({
+      by: ['status'],
+      where: { userId },
+      _sum: { amount: true },
+    });
 
     let totalBalance = 0;
     let availableBalance = 0;
@@ -185,24 +203,25 @@ async canPayBookingFeeFromDeposit(userId: string): Promise<{
       failed: 0,
     };
 
-    deposits.forEach(deposit => {
-      const amount = parseFloat(deposit.total) || 0;
-      
-      switch (deposit.status) {
-        case DepositStatus.COMPLETED:
+    for (const row of grouped) {
+      const amount = Number(row._sum.amount ?? 0);
+      switch (row.status) {
+        case DepositStatus.completed:
           totalBalance += amount;
           availableBalance += amount;
           breakdown.completed = amount;
           break;
-        case DepositStatus.PENDING:
+        case DepositStatus.pending:
           pendingDeposits += amount;
           breakdown.pending = amount;
           break;
-        case DepositStatus.FAILED:
+        case DepositStatus.failed:
           breakdown.failed = amount;
           break;
+        default:
+          break;
       }
-    });
+    }
 
     return {
       totalBalance,
@@ -214,21 +233,18 @@ async canPayBookingFeeFromDeposit(userId: string): Promise<{
 
   async applyDepositToBooking(
     applyDto: ApplyDepositToBookingDto,
-    userId: string
-  ): Promise<{ deposit: Deposit; booking: Booking; appliedAmount: number }> {
+    userId: string,
+  ): Promise<{ deposit: Deposit; booking: Prisma.BookingGetPayload<object>; appliedAmount: number }> {
     const { bookingId, amount } = applyDto;
 
-    return await this.dataSource.transaction(async manager => {
-      // Get user balance
-      const balance = await this.getUserDepositBalance(userId);
+    return this.prisma.$transaction(async (tx) => {
+      const balance = await this.computeDepositBalanceTx(tx, userId);
       if (balance.availableBalance < amount) {
         throw new BadRequestException('Insufficient deposit balance');
       }
 
-      // Get booking
-      const booking = await manager.findOne(Booking, {
+      const booking = await tx.booking.findFirst({
         where: { id: bookingId, studentId: userId },
-        lock: { mode: 'pessimistic_write' }
       });
 
       if (!booking) {
@@ -239,54 +255,59 @@ async canPayBookingFeeFromDeposit(userId: string): Promise<{
         throw new BadRequestException('Cannot apply deposit to cancelled or checked out booking');
       }
 
-      // Calculate how much can be applied
-      const remainingBalance = parseFloat(booking.amountDue.toString());
+      const remainingBalance = Number(booking.amountDue);
       const appliedAmount = Math.min(amount, remainingBalance);
 
       if (appliedAmount <= 0) {
         throw new BadRequestException('No amount due for this booking');
       }
 
-      // Create a new deposit record for the applied amount
-      const deposit = manager.create(Deposit, {
-        userId,
-        amount: -appliedAmount, // Negative amount for withdrawal
-        status: DepositStatus.COMPLETED,
-        depositType: DepositType.ROOM_BALANCE,
-        paymentReference: `booking_${bookingId}_${Date.now()}`,
-        notes: `Applied to booking ${bookingId}`,
-        paymentDate: new Date(),
-        verifiedAt: new Date(),
+      const paymentReference = `booking_${bookingId}_${Date.now()}`;
+
+      const savedDeposit = await tx.deposit.create({
+        data: {
+          userId,
+          amount: new Prisma.Decimal(-appliedAmount),
+          status: DepositStatus.completed,
+          depositType: DepositType.room_balance,
+          paymentReference,
+          notes: `Applied to booking ${bookingId}`,
+          paymentDate: new Date(),
+          verifiedAt: new Date(),
+        },
       });
 
-      const savedDeposit = await manager.save(Deposit, deposit);
+      const currentAmountPaid = Number(booking.amountPaid) || 0;
+      const newAmountPaid = currentAmountPaid + appliedAmount;
+      const totalAmt = Number(booking.totalAmount);
+      let paymentStatus: PaymentStatusEnum = booking.paymentStatus;
+      const newAmountDue = Math.max(0, totalAmt - newAmountPaid);
 
-      // Update booking payment
-      const currentAmountPaid = parseFloat(booking.amountPaid.toString()) || 0;
-      booking.amountPaid = currentAmountPaid + appliedAmount;
-      booking.amountDue = Math.max(0, parseFloat(booking.totalAmount.toString()) - booking.amountPaid);
-
-      if (booking.amountDue <= 0) {
-        booking.paymentStatus = PaymentStatus.PAID;
-      } else if (booking.amountPaid > 0) {
-        booking.paymentStatus = PaymentStatus.PARTIAL;
+      if (newAmountDue <= 0) {
+        paymentStatus = PaymentStatusEnum.paid;
+      } else if (newAmountPaid > 0) {
+        paymentStatus = PaymentStatusEnum.partial;
       }
 
-      const updatedBooking = await manager.save(Booking, booking);
-
-      // Create payment record
-      const payment = manager.create(Payment, {
-        bookingId,
-        amount: appliedAmount,
-        paymentMethod: PaymentMethod.ACCOUNT_CREDIT,
-        paymentType: PaymentType.BOOKING_PAYMENT,
-        transactionRef: deposit.paymentReference,
-        notes: `Paid from deposit balance`,
-        status: 'completed',
-        paymentDate: new Date(),
+      const updatedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          amountPaid: new Prisma.Decimal(newAmountPaid),
+          amountDue: new Prisma.Decimal(newAmountDue),
+          paymentStatus,
+        },
       });
 
-      await manager.save(Payment, payment);
+      await tx.payment.create({
+        data: {
+          bookingId,
+          amount: new Prisma.Decimal(appliedAmount),
+          paymentMethod: PaymentMethodEnum.account_credit,
+          paymentType: PaymentTypeEnum.booking_payment,
+          transactionRef: paymentReference,
+          notes: 'Paid from deposit balance',
+        },
+      });
 
       return {
         deposit: savedDeposit,
@@ -296,15 +317,31 @@ async canPayBookingFeeFromDeposit(userId: string): Promise<{
     });
   }
 
-  async getDepositById(id: string, userId?: string): Promise<Deposit> {
-    const where: any = { id };
-    if (userId) {
-      where.userId = userId;
-    }
+  private async computeDepositBalanceTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<{ availableBalance: number }> {
+    const grouped = await tx.deposit.groupBy({
+      by: ['status'],
+      where: { userId },
+      _sum: { amount: true },
+    });
 
-    const deposit = await this.depositRepository.findOne({
+    let availableBalance = 0;
+    for (const row of grouped) {
+      if (row.status === DepositStatus.completed) {
+        availableBalance += Number(row._sum.amount ?? 0);
+      }
+    }
+    return { availableBalance };
+  }
+
+  async getDepositById(id: string, userId?: string): Promise<Deposit> {
+    const where: Prisma.DepositWhereInput = { id };
+    if (userId) where.userId = userId;
+
+    const deposit = await this.prisma.deposit.findFirst({
       where,
-      relations: ['user'],
     });
 
     if (!deposit) {
@@ -317,37 +354,36 @@ async canPayBookingFeeFromDeposit(userId: string): Promise<{
   async refundDeposit(depositId: string, reason?: string): Promise<Deposit> {
     const deposit = await this.getDepositById(depositId);
 
-    if (deposit.status !== DepositStatus.COMPLETED) {
+    if (deposit.status !== DepositStatus.completed) {
       throw new BadRequestException('Only completed deposits can be refunded');
     }
 
-    if (!deposit.canRefund()) {
+    if (!canRefundDeposit(deposit)) {
       throw new BadRequestException('This deposit cannot be refunded (expired or outside refund period)');
     }
 
-    deposit.status = DepositStatus.REFUNDED;
-    deposit.notes = reason ? `Refunded: ${reason}` : 'Deposit refunded';
-
-    // Note: In a real implementation, you would integrate with Paystack refund API here
-    // await this.paystackService.refundPayment(deposit.paystackReference);
-
-    return await this.depositRepository.save(deposit);
+    return this.prisma.deposit.update({
+      where: { id: depositId },
+      data: {
+        status: DepositStatus.refunded,
+        notes: reason ? `Refunded: ${reason}` : 'Deposit refunded',
+      },
+    });
   }
 
   async cleanupExpiredDeposits(): Promise<{ cleaned: number }> {
-    const expiredDeposits = await this.depositRepository
-      .createQueryBuilder('deposit')
-      .where('deposit.status = :status', { status: DepositStatus.PENDING })
-      .andWhere('deposit.expires_at < :now', { now: new Date() })
-      .getMany();
+    const now = new Date();
+    const result = await this.prisma.deposit.updateMany({
+      where: {
+        status: DepositStatus.pending,
+        expiresAt: { lt: now },
+      },
+      data: {
+        status: DepositStatus.failed,
+        notes: 'Deposit expired - payment not completed',
+      },
+    });
 
-    for (const deposit of expiredDeposits) {
-      deposit.status = DepositStatus.FAILED;
-      deposit.notes = 'Deposit expired - payment not completed';
-    }
-
-    await this.depositRepository.save(expiredDeposits);
-
-    return { cleaned: expiredDeposits.length };
+    return { cleaned: result.count };
   }
 }

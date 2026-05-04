@@ -1,12 +1,11 @@
 import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { CacheModule } from '@nestjs/cache-manager';
 import helmet from 'helmet';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { typeOrmConfig } from './config/typeorm.config';
+import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { HostelsModule } from './hostels/hostels.module';
 import { CloudinaryService } from './cloudinary/cloudinary.service';
@@ -20,10 +19,10 @@ import { AdminModule } from './admin/admin.module';
 import { UserManagementModule } from './admin/users/user-management.module';
 import { AccessManagementModule } from './admin/access/access-management.module';
 import { BookingManagementModule } from './admin/bookings/booking-management.module';
-import { FeedbackModule } from './feeedback/feedback.module';
 import { APP_FILTER } from '@nestjs/core';
 import { redisStore } from 'cache-manager-redis-store';
 import { PublicModule } from './public/public.module';
+import { FeedbackModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -39,7 +38,7 @@ import { PublicModule } from './public/public.module';
     SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60, limit: 100 }]),
-    TypeOrmModule.forRootAsync(typeOrmConfig),
+    PrismaModule,
     AuthModule,
     HostelsModule,
     RoomsModule,
@@ -57,9 +56,9 @@ import { PublicModule } from './public/public.module';
   controllers: [AppController],
   providers: [
     {
-    provide: APP_FILTER,
-    useClass: SentryGlobalFilter,
-  },
+      provide: APP_FILTER,
+      useClass: SentryGlobalFilter,
+    },
     AppService, CloudinaryService],
 })
 export class AppModule {

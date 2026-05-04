@@ -1,329 +1,285 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateHostelDto } from './dto/create-hostel.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UpdateHostelDto } from './dto/update-hostel.dto';
-import { RoomType } from 'src/entities/room-type.entity';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { RoomsService } from 'src/rooms/rooms.service';
 
 @Injectable()
 export class HostelsService {
   constructor(
-    private supabase: SupabaseService,
+    private readonly prisma: PrismaService,
     private cloudinary: CloudinaryService,
-    private roomsService: RoomsService, 
-    @InjectRepository(RoomType)
-    private readonly roomTypeRepository: Repository<RoomType>,
   ) {}
 
   private toPoint(lng: number, lat: number): string {
     return `POINT(${lng} ${lat})`;
   }
 
-async verifyOwnership(hostelId: string, userId: string): Promise<void> {
-  try {
-    console.log(`Verifying ownership: hostel ${hostelId} for user ${userId}`);
-    
-    const { data, error } = await this.supabase.client
-      .from('hostels')
-      .select('admin_id, name')
-      .eq('id', hostelId)
-      .single();
+  async verifyOwnership(hostelId: string, userId: string): Promise<void> {
+    try {
+      console.log(`Verifying ownership: hostel ${hostelId} for user ${userId}`);
 
-    if (error) {
-      console.error('Supabase verifyOwnership error:', error);
-      throw new NotFoundException('Hostel not found');
-    }
+      const hostel = await this.prisma.hostel.findUnique({
+        where: { id: hostelId },
+        select: { adminId: true, name: true }
+      });
 
-    if (data.admin_id !== userId) {
-      console.warn(`Access denied: user ${userId} tried to access hostel owned by ${data.admin_id}`);
-      throw new ForbiddenException('You do not have permission to access this hostel');
-    }
-    
-    console.log(`Ownership verified: ${data.name} belongs to user ${userId}`);
-  } catch (error) {
-    console.error('Error in verifyOwnership method:', error);
-    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
-      throw error;
-    }
+      if (!hostel) {
+        throw new NotFoundException('Hostel not found');
+      }
+
+      if (hostel.adminId !== userId) {
+        console.warn(`Access denied: user ${userId} tried to access hostel owned by ${hostel.adminId}`);
+        throw new ForbiddenException('You do not have permission to access this hostel');
+      }
+
+      console.log(`Ownership verified: ${hostel.name} belongs to user ${userId}`);
+    } catch (error) {
+      console.error('Error in verifyOwnership method:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Failed to verify ownership: ${errorMessage}`);
+    }
   }
-}
 
-async findByAdminId(adminId: string) {
-  try {
-    console.log('Fetching hostels for admin ID:', adminId);
-    
-    if (!adminId) {
-      throw new BadRequestException('Admin ID is required');
-    }
-    
-    const { data, error } = await this.supabase.client
-      .from('hostels')
-      .select('*')
-      .eq('admin_id', adminId)  // This ensures only user's hostels are returned
-      .order('created_at', { ascending: false });
+  async findByAdminId(adminId: string) {
+    try {
+      console.log('Fetching hostels for admin ID:', adminId);
 
-    if (error) {
-      console.error('Supabase findByAdminId error:', error);
-      throw new BadRequestException(`Database error: ${error.message}`);
-    }
-    
-    console.log(`Found ${data?.length || 0} hostels for admin ${adminId}`);
-    return data || [];
-  } catch (error) {
-    console.error('Error in findByAdminId method:', error);
-    if (error instanceof BadRequestException) {
-      throw error;
-    }
+      if (!adminId) {
+        throw new BadRequestException('Admin ID is required');
+      }
+
+      const hostels = await this.prisma.hostel.findMany({
+        where: { adminId },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      console.log(`Found ${hostels.length} hostels for admin ${adminId}`);
+      return hostels.map(h => ({
+        ...h,
+        base_price: h.basePrice,
+        accepting_bookings: h.acceptingBookings,
+        is_verified: h.isVerified,
+      }));
+    } catch (error) {
+      console.error('Error in findByAdminId method:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Failed to fetch hostel: ${errorMessage}`);
+    }
   }
-}
 
-  // New method: Find one hostel by ID and admin ID
   async findOneByAdminId(hostelId: string, adminId: string) {
     try {
       console.log('Fetching hostel:', hostelId, 'for admin:', adminId);
-      
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .select('*')
-        .eq('id', hostelId)
-        .eq('admin_id', adminId)
-        .single();
 
-      if (error) {
-        console.error('Supabase findOneByAdminId error:', error);
+      const hostel = await this.prisma.hostel.findFirst({
+        where: { id: hostelId, adminId }
+      });
+
+      if (!hostel) {
         throw new NotFoundException('Hostel not found or you do not have permission to access it');
       }
       
-      return data;
+      return {
+        ...hostel,
+        base_price: hostel.basePrice,
+        accepting_bookings: hostel.acceptingBookings,
+        is_verified: hostel.isVerified,
+      };
     } catch (error) {
       console.error('Error in findOneByAdminId method:', error);
       if (error instanceof NotFoundException) {
         throw error;
       }
-         const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Failed to fetch hostel: ${errorMessage}`);
     }
   }
 
   async create(adminId: string, createHostelDto: CreateHostelDto, files?: import('multer').File[]) {
     try {
-      console.log('Creating hostel with data:', { adminId, createHostelDto });
-      
-      // Handle adminId validation
+      console.log('Creating hostel with data:', { adminId });
+      console.log('Location data received:', createHostelDto.location);
+      console.log('Amenities data received:', createHostelDto.amenities);
+
       if (!adminId) {
         throw new BadRequestException('Admin ID is required');
       }
-      
+
       const { location, amenities, ...dtoData } = createHostelDto;
-      
-      // Parse location if it's a string
-      let parsedLocation;
+
+      // Ensure location is an object and values are numbers
+      let parsedLocation: any = location;
       if (typeof location === 'string') {
         try {
           parsedLocation = JSON.parse(location);
-          console.log('Parsed location from string:', parsedLocation);
-        } catch (parseError) {
-          console.error('Location parse error:', parseError);
+        } catch (e) {
           throw new BadRequestException('Invalid location JSON format');
         }
-      } else {
-        parsedLocation = location;
-        console.log('Location already parsed:', parsedLocation);
       }
-      
-      // Validate location data
-      console.log('Validating location:', parsedLocation);
-      console.log('lng type:', typeof parsedLocation?.lng, 'value:', parsedLocation?.lng);
-      console.log('lat type:', typeof parsedLocation?.lat, 'value:', parsedLocation?.lat);
-      
-      if (!parsedLocation || 
-          typeof parsedLocation.lng !== 'number' || 
-          typeof parsedLocation.lat !== 'number' ||
-          isNaN(parsedLocation.lng) ||
-          isNaN(parsedLocation.lat)) {
-        console.error('Location validation failed:', parsedLocation);
-        throw new BadRequestException(`Invalid location data provided. Expected numbers, got lng: ${typeof parsedLocation?.lng} (${parsedLocation?.lng}), lat: ${typeof parsedLocation?.lat} (${parsedLocation?.lat})`);
+
+      // Explicitly convert to numbers in case they came as strings in the object
+      const lng = typeof parsedLocation?.lng === 'string' ? parseFloat(parsedLocation.lng) : parsedLocation?.lng;
+      const lat = typeof parsedLocation?.lat === 'string' ? parseFloat(parsedLocation.lat) : parsedLocation?.lat;
+
+      console.log('Parsed location coordinates:', { lng, lat });
+
+      if (lng === undefined || lat === undefined || isNaN(lng) || isNaN(lat)) {
+        throw new BadRequestException(`Invalid location data: lng=${lng}, lat=${lat}. Expected numbers.`);
       }
-      
-      // Parse amenities if it's a string
-      let parsedAmenities;
+
+      // Ensure amenities is an object
+      let parsedAmenities: any = amenities;
       if (typeof amenities === 'string') {
         try {
           parsedAmenities = JSON.parse(amenities);
-        } catch (parseError) {
+        } catch (e) {
           throw new BadRequestException('Invalid amenities JSON format');
         }
-      } else {
-        parsedAmenities = amenities;
       }
-      
-      const point = this.toPoint(parsedLocation.lng, parsedLocation.lat);
-      console.log('Generated point:', point);
-      
+
+      const point = this.toPoint(lng, lat);
+
       // Upload images to Cloudinary
       const imageUrls: string[] = [];
-
       if (files && files.length > 0) {
-        console.log(`Uploading ${files.length} files to Cloudinary`);
         for (const file of files) {
           try {
             const url = await this.cloudinary.uploadImage(file);
             imageUrls.push(url);
-            console.log('Uploaded image:', url);
           } catch (uploadError) {
-            console.error('Failed to upload image:', uploadError);
             const errorMessage = uploadError instanceof Error ? uploadError.message : String(uploadError);
             throw new BadRequestException(`Failed to upload image: ${errorMessage}`);
           }
         }
       }
 
-      // Prepare data for insertion
-      const insertData = {
-        name: dtoData.name,
-        email: dtoData.email,
-        phone: dtoData.phone,
-        SecondaryNumber: dtoData.SecondaryNumber,
-        description: dtoData.description,
-        address: dtoData.address,
-        admin_id: adminId,
-        location: point,
-        images: imageUrls,
-        amenities: parsedAmenities,
-        base_price: dtoData.base_price,
-        payment_method: dtoData.payment_method,
-        bank_details: dtoData.bank_details || null,
-        momo_details: dtoData.momo_details || null,
-        max_occupancy: dtoData.max_occupancy || 0,
-        house_rules: dtoData.house_rules || '',
-        nearby_facilities: dtoData.nearby_facilities || [],
-        check_in_time: dtoData.check_in_time || null,
-        check_out_time: dtoData.check_out_time || null,
-        is_verified: false,
-        is_active: true,
-        accepting_bookings: true, // Default to accepting bookings
-        rating: 0,
-        total_reviews: 0
-      };
-      
-      console.log('Inserting data into Supabase:', insertData);
+      // Use raw SQL for the location geometry field
+      const hostel = await this.prisma.$queryRaw`
+        INSERT INTO hostels (
+          name, email, phone, "SecondaryNumber", description, location, address,
+          admin_id, images, amenities, base_price, payment_method,
+          bank_details, momo_details, max_occupancy, house_rules,
+          nearby_facilities, check_in_time, check_out_time,
+          is_verified, is_active, accepting_bookings, rating, total_reviews
+        ) VALUES (
+          ${dtoData.name}, ${dtoData.email}, ${dtoData.phone}, ${dtoData.SecondaryNumber},
+          ${dtoData.description}, ST_GeomFromText(${point}, 4326), ${dtoData.address},
+          ${adminId}, ${JSON.stringify(imageUrls)}::jsonb, ${JSON.stringify(parsedAmenities)}::jsonb,
+          ${dtoData.base_price}, ${dtoData.payment_method || 'both'}::hostels_payment_method_enum,
+          ${dtoData.bank_details ? JSON.stringify(dtoData.bank_details) : null}::jsonb,
+          ${dtoData.momo_details ? JSON.stringify(dtoData.momo_details) : null}::jsonb,
+          ${dtoData.max_occupancy || 0}, ${dtoData.house_rules || ''},
+          ${JSON.stringify(dtoData.nearby_facilities || [])}::jsonb,
+          ${dtoData.check_in_time || null}::time, ${dtoData.check_out_time || null}::time,
+          false, true, true, 0, 0
+        ) RETURNING id, name, email, phone, "SecondaryNumber", description, address, admin_id, images, amenities, base_price, payment_method, bank_details, momo_details, max_occupancy, house_rules, nearby_facilities, check_in_time, check_out_time, is_verified, is_active, accepting_bookings, rating, total_reviews, created_at, updated_at, ST_AsText(location) as location
+      `;
 
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .insert([insertData])
-        .select('*')
-        .single();
-
-      if (error) {
-        console.error('Supabase insert error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
-      }
-
-      console.log('Successfully created hostel:', data);
-      return data;
-      
+      console.log('Successfully created hostel');
+      return Array.isArray(hostel) ? hostel[0] : hostel;
     } catch (error) {
       console.error('Error in create method:', error);
-      
-      // Clean up uploaded images if database insert failed
-      if (files && files.length > 0) {
-        console.log('Cleaning up uploaded images due to error');
-        // Note: You might want to implement cleanup logic here
-      }
-      
-      // Re-throw the error with more context
       if (error instanceof BadRequestException) {
         throw error;
       }
-      
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Failed to create hostel: ${errorMessage}`);
     }
   }
 
   async findPublicHostels() {
-    const { data, error } = await this.supabase.client
-      .from('hostels')
-      .select(`
-        id,
-        name,
-        description,
-        address,
-        location,
-        images,
-        amenities,
-        rating,
-        total_reviews
-      `)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
+    const hostels = await this.prisma.hostel.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        address: true,
+        images: true,
+        amenities: true,
+        rating: true,
+        totalReviews: true,
+        basePrice: true,
+        acceptingBookings: true,
+        isVerified: true,
+      },
+      orderBy: { createdAt: 'desc' }
+    });
 
-    if (error) {
-      throw new BadRequestException(`Database error: ${error.message}`);
+    // Fetch locations separately via raw SQL for geometry support
+    const hostelIds = hostels.map(h => h.id);
+    if (hostelIds.length > 0) {
+      const locations: any[] = await this.prisma.$queryRaw`
+        SELECT id, ST_AsText(location) as location FROM hostels WHERE id = ANY(${hostelIds}::uuid[])
+      `;
+      const locationMap = new Map(locations.map(l => [l.id, l.location]));
+      return hostels.map(h => ({ 
+        ...h, 
+        base_price: h.basePrice,
+        accepting_bookings: h.acceptingBookings,
+        is_verified: h.isVerified,
+        location: locationMap.get(h.id) || null 
+      }));
     }
 
-    return data || [];
+    return hostels.map(h => ({
+      ...h,
+      base_price: h.basePrice,
+      accepting_bookings: h.acceptingBookings,
+      is_verified: h.isVerified,
+    }));
   }
 
   async findPublicHostelById(id: string) {
-    const { data, error } = await this.supabase.client
-      .from('hostels')
-      .select(`
-        id,
-        name,
-        description,
-        address,
-        location,
-        images,
-        amenities,
-        base_price,
-        payment_method,
-        bank_details,
-        momo_details,
-        max_occupancy,
-        house_rules,
-        nearby_facilities,
-        check_in_time,
-        check_out_time,
-        rating,
-        total_reviews
-      `)
-      .eq('id', id)
-      .eq('is_active', true)
-      .single();
+    const hostel = await this.prisma.hostel.findFirst({
+      where: { id, isActive: true },
+      select: {
+        id: true, name: true, description: true, address: true,
+        images: true, amenities: true, basePrice: true, paymentMethod: true,
+        bankDetails: true, momoDetails: true, maxOccupancy: true,
+        houseRules: true, nearbyFacilities: true, checkInTime: true,
+        checkOutTime: true, rating: true, totalReviews: true,
+        acceptingBookings: true, isVerified: true,
+      }
+    });
 
-    if (error) {
-      throw new NotFoundException(`Hostel not found: ${error.message}`);
-    }
-
-    if (!data) {
+    if (!hostel) {
       throw new NotFoundException('Hostel not found');
     }
 
-    return data;
+    // Fetch location via raw SQL
+    const locations: any[] = await this.prisma.$queryRaw`
+      SELECT ST_AsText(location) as location FROM hostels WHERE id = ${id}::uuid
+    `;
+
+    return { 
+      ...hostel, 
+      base_price: hostel.basePrice,
+      accepting_bookings: hostel.acceptingBookings,
+      is_verified: hostel.isVerified,
+      location: locations[0]?.location || null 
+    };
   }
 
-  // Keep the original findAll method for super admins
   async findAll() {
     try {
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Supabase findAll error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
-      }
+      const hostels = await this.prisma.hostel.findMany({
+        orderBy: { createdAt: 'desc' }
+      });
       
-      return data || [];
+      return hostels.map(h => ({
+        ...h,
+        base_price: h.basePrice,
+        accepting_bookings: h.acceptingBookings,
+        is_verified: h.isVerified,
+      }));
     } catch (error) {
       console.error('Error in findAll method:', error);
       throw error;
@@ -332,61 +288,45 @@ async findByAdminId(adminId: string) {
 
   async findOne(id: string) {
     try {
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .select('*')
-        .eq('id', id)
-        .single();
+      const hostel = await this.prisma.hostel.findUnique({ where: { id } });
 
-      if (error) {
-        console.error('Supabase findOne error:', error);
+      if (!hostel) {
         throw new NotFoundException('Hostel not found');
       }
-      
-      return data;
+
+      return {
+        ...hostel,
+        base_price: hostel.basePrice,
+        accepting_bookings: hostel.acceptingBookings,
+        is_verified: hostel.isVerified,
+      };
     } catch (error) {
       console.error('Error in findOne method:', error);
       throw error;
     }
   }
 
-  // Updated method to toggle booking status with ownership verification
   async toggleBookingStatus(id: string, acceptingBookings: boolean) {
     try {
-      console.log(`Toggling booking status for hostel ${id} to ${acceptingBookings}`);
-      
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .update({ 
-          accepting_bookings: acceptingBookings,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id)
-        .select('id, name, accepting_bookings')
-        .single();
+      const hostel = await this.prisma.hostel.update({
+        where: { id },
+        data: {
+          acceptingBookings,
+          updatedAt: new Date()
+        },
+        select: { id: true, name: true, acceptingBookings: true }
+      });
 
-      if (error) {
-        console.error('Supabase toggleBookingStatus error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
-      }
-
-      if (!data) {
-        throw new NotFoundException('Hostel not found');
-      }
-      
-      console.log('Successfully toggled booking status:', data);
       return {
-        message: `Hostel ${data.name} is now ${acceptingBookings ? 'accepting' : 'not accepting'} bookings`,
-        hostel: data
+        message: `Hostel ${hostel.name} is now ${acceptingBookings ? 'accepting' : 'not accepting'} bookings`,
+        hostel
       };
-      
     } catch (error) {
       console.error('Error in toggleBookingStatus method:', error);
-      
-      if (error instanceof BadRequestException || error instanceof NotFoundException) {
-        throw error;
+      if (error.code === 'P2025') {
+        throw new NotFoundException('Hostel not found');
       }
-       const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Failed to toggle booking status: ${errorMessage}`);
     }
   }
@@ -396,15 +336,12 @@ async findByAdminId(adminId: string) {
       const existingHostel = await this.findOne(id);
       let imageUpdates: string[] = [];
 
-      // Handle image uploads
       if (files && files.length > 0) {
         for (const file of files) {
           try {
             const url = await this.cloudinary.uploadImage(file);
             imageUpdates.push(url);
           } catch (uploadError) {
-            console.error('Failed to upload image during update:', uploadError);
-                   
             const errorMessage = uploadError instanceof Error ? uploadError.message : String(uploadError);
             throw new BadRequestException(`Failed to upload image: ${errorMessage}`);
           }
@@ -412,236 +349,152 @@ async findByAdminId(adminId: string) {
       }
 
       // Parse and validate location if provided
-      let locationUpdate = {};
+      let locationSql = false;
+      let point = '';
       if (updateHostelDto.location) {
-        console.log('Location data received for update:', updateHostelDto.location, typeof updateHostelDto.location);
-        
         let parsedLocation;
-        
-        // Parse location if it's a string
         if (typeof updateHostelDto.location === 'string') {
           try {
             parsedLocation = JSON.parse(updateHostelDto.location);
-            console.log('Parsed location from string:', parsedLocation);
           } catch (parseError) {
-            console.error('Location parse error:', parseError);
             throw new BadRequestException('Invalid location JSON format');
           }
         } else {
           parsedLocation = updateHostelDto.location;
-          console.log('Location already parsed:', parsedLocation);
         }
-        
-        // Validate location data
-        console.log('Validating location:', parsedLocation);
-        console.log('lng type:', typeof parsedLocation?.lng, 'value:', parsedLocation?.lng);
-        console.log('lat type:', typeof parsedLocation?.lat, 'value:', parsedLocation?.lat);
-        
-        if (!parsedLocation || 
-            typeof parsedLocation.lng !== 'number' || 
-            typeof parsedLocation.lat !== 'number' ||
-            isNaN(parsedLocation.lng) ||
-            isNaN(parsedLocation.lat)) {
-          console.error('Location validation failed:', parsedLocation);
-          throw new BadRequestException(`Invalid location data provided. Expected numbers, got lng: ${typeof parsedLocation?.lng} (${parsedLocation?.lng}), lat: ${typeof parsedLocation?.lat} (${parsedLocation?.lat})`);
+
+        if (!parsedLocation ||
+          typeof parsedLocation.lng !== 'number' ||
+          typeof parsedLocation.lat !== 'number' ||
+          isNaN(parsedLocation.lng) ||
+          isNaN(parsedLocation.lat)) {
+          throw new BadRequestException(`Invalid location data provided.`);
         }
-        
-        locationUpdate = {
-          location: this.toPoint(parsedLocation.lng, parsedLocation.lat)
-        };
+
+        point = this.toPoint(parsedLocation.lng, parsedLocation.lat);
+        locationSql = true;
       }
 
       // Parse amenities if provided
-      let amenitiesUpdate = {};
+      let parsedAmenities;
       if (updateHostelDto.amenities) {
-        console.log('Amenities data received for update:', updateHostelDto.amenities, typeof updateHostelDto.amenities);
-        
-        let parsedAmenities;
-        
-        // Parse amenities if it's a string
         if (typeof updateHostelDto.amenities === 'string') {
           try {
             parsedAmenities = JSON.parse(updateHostelDto.amenities);
-            console.log('Parsed amenities from string:', parsedAmenities);
           } catch (parseError) {
-            console.error('Amenities parse error:', parseError);
             throw new BadRequestException('Invalid amenities JSON format');
           }
         } else {
           parsedAmenities = updateHostelDto.amenities;
-          console.log('Amenities already parsed:', parsedAmenities);
         }
-        
-        // Validate amenities structure
-        const expectedAmenities = ['wifi', 'laundry', 'cafeteria', 'parking', 'security'];
-        const isValidAmenities = parsedAmenities && 
-          typeof parsedAmenities === 'object' &&
-          expectedAmenities.every(amenity => 
-            parsedAmenities.hasOwnProperty(amenity) && 
-            typeof parsedAmenities[amenity] === 'boolean'
-          );
-        
-        if (!isValidAmenities) {
-          console.error('Invalid amenities structure:', parsedAmenities);
-          throw new BadRequestException('Invalid amenities data structure');
-        }
-        
-        amenitiesUpdate = { amenities: parsedAmenities };
       }
 
-      // Prepare update data - exclude location and amenities from spread to avoid conflicts
       const { location, amenities, ...restOfDto } = updateHostelDto;
-      
-      const updateData = {
+
+      // Build the update data
+      const updateData: any = {
         ...restOfDto,
-        base_price: updateHostelDto.base_price,
-        payment_method: updateHostelDto.payment_method,
-        bank_details: updateHostelDto.bank_details,
-        momo_details: updateHostelDto.momo_details,
-        max_occupancy: updateHostelDto.max_occupancy,
-        house_rules: updateHostelDto.house_rules,
-        nearby_facilities: updateHostelDto.nearby_facilities,
-        check_in_time: updateHostelDto.check_in_time,
-        check_out_time: updateHostelDto.check_out_time,
-        ...locationUpdate,
-        ...amenitiesUpdate,
-        images: [...(existingHostel.images || []), ...imageUpdates],
-        updated_at: new Date().toISOString()
+        images: [...((existingHostel.images as any[]) || []), ...imageUpdates],
+        updatedAt: new Date(),
       };
 
-      console.log('Update data being sent to database:', updateData);
+      if (parsedAmenities) updateData.amenities = parsedAmenities;
 
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .update(updateData)
-        .eq('id', id)
-        .select('*')
-        .single();
-
-      if (error) {
-        console.error('Supabase update error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
+      // If location needs updating, use raw SQL for geometry
+      if (locationSql) {
+        await this.prisma.$executeRaw`
+          UPDATE hostels SET location = ST_GeomFromText(${point}, 4326) WHERE id = ${id}::uuid
+        `;
       }
-      
-      console.log('Successfully updated hostel:', data);
-      return data;
+
+      const hostel = await this.prisma.hostel.update({
+        where: { id },
+        data: updateData,
+      });
+
+      return hostel;
     } catch (error) {
       console.error('Error in update method:', error);
-      
-      // Clean up uploaded images if database update failed
-      if (files && files.length > 0) {
-        console.log('Cleaning up uploaded images due to error');
-        // Note: You might want to implement cleanup logic here
-      }
-      
-      // Re-throw the error with more context
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
-      
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Failed to update hostel: ${errorMessage}`);
     }
   }
 
-  async getRoomTypesByHostelId(hostelId: string): Promise<any> {
-    return this.roomsService.getRoomTypesByHostelId(hostelId);
+  async getRoomTypesByHostelId(hostelId: string) {
+    return this.prisma.roomType.findMany({
+      where: { hostelId },
+      orderBy: { name: 'asc' }
+    });
   }
 
-  async getRoomTypeByIdStudent(hostelId: string, roomTypeId: string): Promise<RoomType> {
-    const roomType = await this.roomTypeRepository.findOne({
+  async getRoomTypeByIdStudent(hostelId: string, roomTypeId: string) {
+    const roomType = await this.prisma.roomType.findFirst({
       where: { id: roomTypeId, hostelId },
-      relations: ['hostel']
+      include: { hostel: true }
     });
 
-  if (!roomType) {
-    throw new NotFoundException(
-      `Room type with ID ${roomTypeId} not found in hostel ${hostelId}`
-    );
+    if (!roomType) {
+      throw new NotFoundException(
+        `Room type with ID ${roomTypeId} not found in hostel ${hostelId}`
+      );
+    }
+
+    return roomType;
   }
 
-  return roomType;
-}
-
-  async getRoomTypesByHostelIdStudent(hostelId: string): Promise<any> {
-    return this.roomsService.getRoomTypesByHostelId(hostelId);
+  async getRoomTypesByHostelIdStudent(hostelId: string) {
+    return this.getRoomTypesByHostelId(hostelId);
   }
 
-  // Add this method to hostels.service.ts
-async getHostelContact(id: string) {
-  try {
-    console.log(`Fetching contact details for hostel: ${id}`);
-    
-    const { data, error } = await this.supabase.client
-      .from('hostels')
-      .select(`
-        name,
-        phone,
-        email,
-        SecondaryNumber,
-        admin_id,
-        users!hostels_admin_id_fkey(name, email, phone)
-      `)
-      .eq('id', id)
-      .single();
+  async getHostelContact(id: string) {
+    try {
+      const hostel = await this.prisma.hostel.findUnique({
+        where: { id },
+        select: {
+          name: true, phone: true, email: true, secondaryNumber: true, adminId: true,
+        }
+      });
 
-    if (error) {
-      console.error('Supabase getHostelContact error:', error);
-      throw new NotFoundException('Hostel not found');
-    }
-    
-    if (!data) {
-      throw new NotFoundException('Hostel not found');
-    }
-    
-    const adminInfo = data.users || {};
-    
-    return {
-      phone: data.phone,
-      email: data.email,
-      secondaryPhone: data.SecondaryNumber,
-    };
-    
-  } catch (error) {
-    console.error('Error in getHostelContact method:', error);
-    
-    if (error instanceof NotFoundException) {
-      throw error;
-    }
-    
+      if (!hostel) {
+        throw new NotFoundException('Hostel not found');
+      }
+
+      return {
+        phone: hostel.phone,
+        email: hostel.email,
+        secondaryPhone: hostel.secondaryNumber,
+      };
+    } catch (error) {
+      console.error('Error in getHostelContact method:', error);
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Failed to fetch contact details: ${errorMessage}`);
+    }
   }
-}
 
   async removeImage(id: string, imageUrl: string) {
     try {
       const hostel = await this.findOne(id);
       const publicId = this.cloudinary.extractPublicId(imageUrl);
-      
+
       if (!publicId) {
         throw new BadRequestException('Invalid image URL');
       }
-      
-      // Remove from Cloudinary
-      await this.cloudinary.deleteImage(publicId);
-      
-      // Update hostel images
-      const updatedImages = hostel.images.filter(img => img !== imageUrl);
-      
-      const { data, error } = await this.supabase.client
-        .from('hostels')
-        .update({ images: updatedImages })
-        .eq('id', id)
-        .select('images')
-        .single();
 
-      if (error) {
-        console.error('Supabase removeImage error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
-      }
-      
-      return data;
+      await this.cloudinary.deleteImage(publicId);
+
+      const updatedImages = ((hostel.images as any[]) || []).filter(img => img !== imageUrl);
+
+      return this.prisma.hostel.update({
+        where: { id },
+        data: { images: updatedImages },
+        select: { images: true }
+      });
     } catch (error) {
       console.error('Error in removeImage method:', error);
       throw error;
@@ -651,29 +504,19 @@ async getHostelContact(id: string) {
   async remove(id: string) {
     try {
       const hostel = await this.findOne(id);
-      
-      // Delete all images from Cloudinary
-      for (const imageUrl of hostel.images) {
+
+      for (const imageUrl of (hostel.images as any[]) || []) {
         const publicId = this.cloudinary.extractPublicId(imageUrl);
         if (publicId) {
           try {
             await this.cloudinary.deleteImage(publicId);
           } catch (deleteError) {
             console.error('Failed to delete image from Cloudinary:', deleteError);
-            // Continue with deletion even if image cleanup fails
           }
         }
       }
-      
-      const { error } = await this.supabase.client
-        .from('hostels')
-        .delete()
-        .eq('id', id);
 
-      if (error) {
-        console.error('Supabase remove error:', error);
-        throw new BadRequestException(`Database error: ${error.message}`);
-      }
+      await this.prisma.hostel.delete({ where: { id } });
 
       return { message: 'Hostel deleted successfully' };
     } catch (error) {

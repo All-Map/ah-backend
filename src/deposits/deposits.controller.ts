@@ -28,11 +28,11 @@ import {
   DepositFilterDto,
   ApplyDepositToBookingDto,
 } from './dto/deposit.dto';
-import { Deposit } from '../entities/deposit.entity';
+import type { Deposit } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from '../entities/user.entity';
+import { UserRole } from '@prisma/client';
 
 @ApiTags('Deposits')
 @Controller('deposits')
@@ -42,12 +42,11 @@ export class DepositsController {
   constructor(private readonly depositsService: DepositsService) {}
 
   @Post()
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Create a new deposit record' })
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Deposit created successfully',
-    type: Deposit,
   })
   @UsePipes(new ValidationPipe({ transform: true }))
   async createDeposit(
@@ -58,7 +57,7 @@ export class DepositsController {
   }
 
   @Post('verify')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Verify a deposit payment with Paystack' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -79,7 +78,7 @@ export class DepositsController {
   }
 
   @Get('balance')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get user deposit balance' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -90,7 +89,7 @@ export class DepositsController {
   }
 
   @Get()
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get user deposits with filtering' })
   @ApiQuery({ name: 'status', required: false, enum: ['pending', 'completed', 'failed', 'refunded'] })
   @ApiQuery({ name: 'depositType', required: false, enum: ['booking_deposit', 'room_balance', 'account_credit'] })
@@ -119,7 +118,7 @@ export class DepositsController {
   }
 
   @Get('admin')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get all deposits (Admin only)' })
   @ApiQuery({ name: 'userId', required: false, type: String })
   @ApiResponse({
@@ -140,13 +139,12 @@ export class DepositsController {
   }
 
   @Get(':id')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get deposit by ID' })
   @ApiParam({ name: 'id', description: 'Deposit ID' })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Deposit retrieved successfully',
-    type: Deposit,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -157,12 +155,12 @@ export class DepositsController {
     @Request() req: any,
   ): Promise<Deposit> {
     // Students can only see their own deposits, admins can see any
-    const userId = req.user.role === UserRole.STUDENT ? req.user.id : undefined;
+    const userId = req.user.role === UserRole.student ? req.user.id : undefined;
     return await this.depositsService.getDepositById(id, userId);
   }
 
   @Post('apply-to-booking')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Apply deposit balance to a booking' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -183,7 +181,7 @@ export class DepositsController {
   }
 
   @Patch(':id/refund')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Refund a deposit (Super Admin only)' })
   @ApiParam({ name: 'id', description: 'Deposit ID' })
   @ApiResponse({
@@ -202,7 +200,7 @@ export class DepositsController {
   }
 
   @Post('cleanup/expired')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Clean up expired deposits (System operation)' })
   @ApiResponse({
     status: HttpStatus.OK,

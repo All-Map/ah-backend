@@ -2,7 +2,7 @@
 import { IsUUID, IsString, IsEmail, IsPhoneNumber, IsEnum, IsDateString, IsNumber, IsOptional, IsArray, ValidateNested, Min, Max, IsBoolean } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { BookingStatus, BookingType, PaymentStatus } from 'src/entities/booking.entity';
+import { BookingStatus, BookingType, PaymentStatusEnum as PaymentStatus } from '@prisma/client';
 
 class EmergencyContactDto {
   @ApiProperty()
@@ -277,9 +277,10 @@ export class PaymentDto {
   @IsString()
   paymentMethod: string;
 
-  @ApiProperty({ description: 'Transaction reference' })
+  @ApiPropertyOptional({ description: 'Transaction reference' })
+  @IsOptional()
   @IsString()
-  transactionRef: string;
+  transactionRef?: string;
 
   @ApiPropertyOptional({ description: 'Payment notes' })
   @IsOptional()

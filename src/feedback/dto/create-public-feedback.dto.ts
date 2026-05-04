@@ -1,5 +1,5 @@
 import { IsString, IsEmail, IsNotEmpty, IsOptional, Length, IsEnum } from 'class-validator';
-import { PublicFeedbackCategory } from 'src/entities/public-feedback.entity';
+import { PublicFeedbackCategory } from '../feedback.types';
 
 export class CreatePublicFeedbackDto {
   @IsString()

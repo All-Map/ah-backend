@@ -5,7 +5,7 @@ export class UpdateRoomTypeDto extends PartialType(CreateRoomTypeDto) {}
 
 // dto/create-room.dto.ts
 import { IsString, IsNumber, IsOptional, IsEnum, Min, Max, IsPositive } from 'class-validator';
-import { RoomStatus } from 'src/entities/room.entity';
+import { RoomStatus } from '../room-status';
 
 export class CreateRoomDto {
   @IsString()

@@ -1,5 +1,5 @@
 import { Controller, Post, Body, UseGuards, Get, Param, UnauthorizedException, Patch, BadRequestException, Req,
-  UseInterceptors, Res
+  UseInterceptors, Res, HttpException
  } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL, CacheKey } from '@nestjs/cache-manager';
 import { Request } from 'express';
@@ -10,7 +10,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
-import { User } from 'src/entities/user.entity';
+import { JwtUser } from './types/jwt-user';
 import { RolesGuard } from './guards/roles.guard';
 import { ProfileService } from 'src/profile/profile.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -48,7 +48,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get('user-profile')
   @CacheTTL(300) // Cache for 5 minutes
-  async getUserProfile(@CurrentUser() user: User) {
+  async getUserProfile(@CurrentUser() user: JwtUser) {
     try {
       return await this.authService.getUserProfile(user.id);
     } catch (error) {
@@ -66,15 +66,15 @@ export class AuthController {
         throw new UnauthorizedException('Invalid email or password');
       }
 
-      if (!user.is_verified) {
-        await this.authService.resendVerificationEmail(user.email);
+      if (!user.isVerified) {
+        await this.authService.resendVerificationEmail(String(user.email));
         throw new UnauthorizedException('Please verify your email first. Check your inbox for verification instructions.');
       }
 
       return await this.authService.login(user, loginDto.password);
     } catch (error) {
       // Preserve specific error messages but ensure proper error type
-      if (error instanceof UnauthorizedException) {
+      if (error instanceof HttpException) {
         throw error;
       }
       throw new UnauthorizedException('Login failed. Please try again.');
@@ -88,7 +88,7 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(GoogleAuthGuard)
   async googleAuthRedirect(@Req() req, @Res() res: Response) {
-    const user = req.user as User;
+    const user = req.user as JwtUser;
     const result = await this.authService.login(user);
     
     // Redirect to frontend with token and user info
@@ -135,14 +135,14 @@ export class AuthController {
     @Req() req: Request,
     @Body() onboardingDto: OnboardingDto
   ) {
-    const user = req.user as User;
+    const user = req.user as JwtUser;
     return this.authService.completeOnboarding(user.id, onboardingDto);
   }
 
   @Get('onboarding/status')
   @UseGuards(JwtAuthGuard)
   async getOnboardingStatus(@Req() req: Request) {
-    const user = req.user as User;
+    const user = req.user as JwtUser;
     return this.authService.getOnboardingStatus(user.id);
   }
 
@@ -210,7 +210,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('profile')
-  getProfile(@CurrentUser() user: User) {
+  getProfile(@CurrentUser() user: JwtUser) {
     return user;
   }
 

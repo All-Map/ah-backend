@@ -1,16 +1,10 @@
-import { Module } from "@nestjs/common";
-import { TypeOrmModule } from "@nestjs/typeorm";
-import { AuthModule } from "src/auth/auth.module";
-import { PreviewUsage } from "src/entities/preview-usage.entity";
-import { PreviewUsageService } from "./preview-usage.service";
+import { Module } from '@nestjs/common';
+import { PreviewUsageService } from './preview-usage.service';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-    imports: [
-        TypeOrmModule.forFeature([PreviewUsage]),
-        AuthModule,
-    ],
-    providers: [PreviewUsageService],
-    exports: [PreviewUsageService],
+  imports: [PrismaModule],
+  providers: [PreviewUsageService],
+  exports: [PreviewUsageService],
 })
-
 export class PreviewUsageModule {}

@@ -1,79 +1,38 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, FindManyOptions, Like, In } from 'typeorm';
-import { Room, RoomStatus } from '../entities/room.entity';
-import { Hostel } from '../entities/hostel.entity';
-import { RoomType, RoomGender } from '../entities/room-type.entity';
+import { PrismaService } from '../prisma/prisma.service';
+import { RoomGender, Prisma } from '@prisma/client';
 import { CreateRoomTypeDto } from './dto/create-room-type.dto';
+import { 
+  CreateRoomDto, 
+  UpdateRoomDto, 
+  RoomFilterDto, 
+  BulkCreateRoomDto, 
+  UpdateOccupancyDto 
+} from './dto/rooms.dto';
 
-// DTOs
-export class CreateRoomDto {
-  hostelId: string;
-  roomTypeId: string;
-  roomNumber: string;
-  floor?: number;
-  maxOccupancy: number;
-  notes?: string;
-}
-
-export class UpdateRoomDto {
-  roomNumber?: string;
-  floor?: number;
-  status?: RoomStatus;
-  maxOccupancy?: number;
-  notes?: string;
-}
-
-export class RoomFilterDto {
-  hostelId?: string;
-  roomTypeId?: string;
-  status?: RoomStatus;
-  floor?: number;
-  available?: boolean;
-  search?: string;
-  page?: number;
-  limit?: number;
-  sortBy?: 'roomNumber' | 'floor' | 'status' | 'currentOccupancy' | 'createdAt';
-  sortOrder?: 'ASC' | 'DESC';
-  gender?: RoomGender; // New filter for gender
-}
-
-export class BulkCreateRoomDto {
-  hostelId: string;
-  roomTypeId: string;
-  floor?: number;
-  maxOccupancy: number;
-  roomNumbers: string[];
-  notes?: string;
-}
-
-export class UpdateOccupancyDto {
-  currentOccupancy: number;
-}
+const ROOM_STATUS = {
+  AVAILABLE: 'available',
+  OCCUPIED: 'occupied',
+  MAINTENANCE: 'maintenance',
+  RESERVED: 'reserved',
+} as const;
 
 @Injectable()
 export class RoomsService {
-  constructor(
-    @InjectRepository(Room)
-    private readonly roomRepository: Repository<Room>,
-    @InjectRepository(Hostel)
-    private readonly hostelRepository: Repository<Hostel>,
-    @InjectRepository(RoomType)
-    private readonly roomTypeRepository: Repository<RoomType>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   // Create a single room
-  async createRoom(createRoomDto: CreateRoomDto): Promise<Room> {
+  async createRoom(createRoomDto: CreateRoomDto) {
     const { hostelId, roomTypeId, roomNumber, ...roomData } = createRoomDto;
 
     // Verify hostel exists
-    const hostel = await this.hostelRepository.findOne({ where: { id: hostelId } });
+    const hostel = await this.prisma.hostel.findUnique({ where: { id: hostelId } });
     if (!hostel) {
       throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
     }
 
     // Verify room type exists and belongs to the hostel
-    const roomType = await this.roomTypeRepository.findOne({
+    const roomType = await this.prisma.roomType.findFirst({
       where: { id: roomTypeId, hostelId }
     });
     if (!roomType) {
@@ -81,45 +40,46 @@ export class RoomsService {
     }
 
     // Check if room number already exists in the hostel
-    const existingRoom = await this.roomRepository.findOne({
+    const existingRoom = await this.prisma.room.findFirst({
       where: { hostelId, roomNumber }
     });
     if (existingRoom) {
       throw new ConflictException(`Room number ${roomNumber} already exists in this hostel`);
     }
 
-    // Create the room
-    const room = this.roomRepository.create({
-      hostelId,
-      roomTypeId,
-      roomNumber,
-      ...roomData,
-      currentOccupancy: 0,
-      status: RoomStatus.AVAILABLE
+    return this.prisma.room.create({
+      data: {
+        hostelId,
+        roomTypeId,
+        roomNumber,
+        floor: roomData.floor,
+        maxOccupancy: roomData.maxOccupancy,
+        notes: roomData.notes,
+        currentOccupancy: 0,
+        status: ROOM_STATUS.AVAILABLE,
+      }
     });
-
-    return await this.roomRepository.save(room);
   }
 
-  async getRoomTypesByHostelId(hostelId: string): Promise<RoomType[]> {
-    return this.roomTypeRepository.find({
+  async getRoomTypesByHostelId(hostelId: string) {
+    return this.prisma.roomType.findMany({
       where: { hostelId },
-      order: { name: 'ASC' }
+      orderBy: { name: 'asc' }
     });
   }
 
   // Bulk create rooms
-  async bulkCreateRooms(bulkCreateDto: BulkCreateRoomDto): Promise<Room[]> {
+  async bulkCreateRooms(bulkCreateDto: BulkCreateRoomDto) {
     const { hostelId, roomTypeId, roomNumbers, ...commonData } = bulkCreateDto;
 
     // Verify hostel exists
-    const hostel = await this.hostelRepository.findOne({ where: { id: hostelId } });
+    const hostel = await this.prisma.hostel.findUnique({ where: { id: hostelId } });
     if (!hostel) {
       throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
     }
 
     // Verify room type exists and belongs to the hostel
-    const roomType = await this.roomTypeRepository.findOne({
+    const roomType = await this.prisma.roomType.findFirst({
       where: { id: roomTypeId, hostelId }
     });
     if (!roomType) {
@@ -127,89 +87,91 @@ export class RoomsService {
     }
 
     // Check for existing room numbers
-    const existingRooms = await this.roomRepository.find({
-      where: { hostelId, roomNumber: In(roomNumbers) }
+    const existingRooms = await this.prisma.room.findMany({
+      where: { hostelId, roomNumber: { in: roomNumbers } }
     });
-    
+
     if (existingRooms.length > 0) {
       const existingNumbers = existingRooms.map(room => room.roomNumber);
       throw new ConflictException(`Room numbers already exist: ${existingNumbers.join(', ')}`);
     }
 
-    // Create all rooms
-    const rooms = roomNumbers.map(roomNumber => 
-      this.roomRepository.create({
-        hostelId,
-        roomTypeId,
-        roomNumber,
-        ...commonData,
-        currentOccupancy: 0,
-        status: RoomStatus.AVAILABLE
-      })
+    // Create all rooms using a transaction
+    return this.prisma.$transaction(
+      roomNumbers.map(roomNumber =>
+        this.prisma.room.create({
+          data: {
+            hostelId,
+            roomTypeId,
+            roomNumber,
+            floor: commonData.floor,
+            maxOccupancy: commonData.maxOccupancy,
+            notes: commonData.notes,
+            currentOccupancy: 0,
+            status: ROOM_STATUS.AVAILABLE,
+          }
+        })
+      )
     );
-
-    return await this.roomRepository.save(rooms);
   }
 
-  // Update the create method in your rooms.service.ts
+  async create(createRoomTypeDto: CreateRoomTypeDto) {
+    if (!createRoomTypeDto) {
+      throw new BadRequestException('Request body is required');
+    }
 
-async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
-  // Validate input
-  if (!createRoomTypeDto) {
-    throw new BadRequestException('Request body is required');
+    const { hostelId, name } = createRoomTypeDto;
+
+    // Check hostel exists
+    const hostel = await this.prisma.hostel.findUnique({ where: { id: hostelId } });
+    if (!hostel) {
+      throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
+    }
+
+    // Check for duplicate room type name in the same hostel
+    const existing = await this.prisma.roomType.findFirst({ where: { hostelId, name } });
+    if (existing) {
+      throw new ConflictException(`Room type "${name}" already exists in this hostel`);
+    }
+
+    // Handle allowedGenders properly
+    let allowedGenders: string[] = [];
+    if (createRoomTypeDto.allowedGenders && Array.isArray(createRoomTypeDto.allowedGenders)) {
+      allowedGenders = createRoomTypeDto.allowedGenders;
+    } else if (createRoomTypeDto.gender) {
+      allowedGenders = [createRoomTypeDto.gender];
+    } else {
+      allowedGenders = ['mixed'];
+    }
+
+    try {
+      return await this.prisma.roomType.create({
+        data: {
+          hostelId,
+          name: createRoomTypeDto.name,
+          description: createRoomTypeDto.description || null,
+          pricePerSemester: createRoomTypeDto.pricePerSemester,
+          pricePerMonth: createRoomTypeDto.pricePerMonth,
+          pricePerWeek: createRoomTypeDto.pricePerWeek || null,
+          capacity: createRoomTypeDto.capacity || 1,
+          gender: (createRoomTypeDto.gender as RoomGender) || 'mixed',
+          allowedGenders,
+          amenities: createRoomTypeDto.amenities || [],
+          images: createRoomTypeDto.images || [],
+          totalRooms: createRoomTypeDto.total_rooms || createRoomTypeDto.capacity || 2,
+          availableRooms: createRoomTypeDto.available_rooms || createRoomTypeDto.capacity || 2,
+        }
+      });
+    } catch (error) {
+      console.error('Error saving room type:', error);
+      throw new BadRequestException('Failed to create room type: ' + error.message);
+    }
   }
 
-  const { hostelId, name } = createRoomTypeDto;
-
-  // Check hostel exists
-  const hostel = await this.hostelRepository.findOneBy({ id: hostelId });
-  if (!hostel) {
-    throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
-  }
-
-  // Check for duplicate room type name in the same hostel
-  const existing = await this.roomTypeRepository.findOneBy({ hostelId, name });
-  if (existing) {
-    throw new ConflictException(`Room type "${name}" already exists in this hostel`);
-  }
-
-  // Handle allowedGenders properly
-  let allowedGenders: string[] = [];
-  
-  if (createRoomTypeDto.allowedGenders && Array.isArray(createRoomTypeDto.allowedGenders)) {
-    // Use the provided allowedGenders array
-    allowedGenders = createRoomTypeDto.allowedGenders;
-  } else if (createRoomTypeDto.gender) {
-    // Fall back to single gender field if allowedGenders is not provided
-    allowedGenders = [createRoomTypeDto.gender];
-  } else {
-    // Default to mixed if neither is provided
-    allowedGenders = [RoomGender.MIXED];
-  }
-
-  // Create with default values including properly formatted allowedGenders
-  const roomType = this.roomTypeRepository.create({
-    ...createRoomTypeDto,
-    gender: createRoomTypeDto.gender || RoomGender.MIXED, // Keep for backward compatibility
-    allowedGenders: allowedGenders, // This should now be a proper array
-    amenities: createRoomTypeDto.amenities || [],
-    images: createRoomTypeDto.images || [],
-    totalRooms: createRoomTypeDto.total_rooms || createRoomTypeDto.capacity || 2,
-    availableRooms: createRoomTypeDto.available_rooms || createRoomTypeDto.capacity || 2
-  });
-
-  try {
-    return await this.roomTypeRepository.save(roomType);
-  } catch (error) {
-    console.error('Error saving room type:', error);
-    console.error('Room type data:', roomType);
-    throw new BadRequestException('Failed to create room type: ' + error.message);
-  }
-}
-  async getRoomTypeById(hostelId: string, roomTypeId: string): Promise<RoomType> {
-    const roomType = await this.roomTypeRepository.findOne({
+  async getRoomTypeById(hostelId: string, roomTypeId: string) {
+    const roomType = await this.prisma.roomType.findFirst({
       where: { id: roomTypeId, hostelId },
-      relations: ['hostel']
+      include: { hostel: true }
     });
 
     if (!roomType) {
@@ -220,7 +182,7 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
     return roomType;
   }
 
-  // Get all rooms with filtering and pagination (updated with gender filter)
+  // Get all rooms with filtering and pagination
   async getRooms(filterDto: RoomFilterDto = {}) {
     const {
       hostelId,
@@ -233,58 +195,43 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       page = 1,
       limit = 10,
       sortBy = 'roomNumber',
-      sortOrder = 'ASC'
+      sortOrder = 'asc'
     } = filterDto;
 
-    const queryBuilder = this.roomRepository
-      .createQueryBuilder('room')
-      .leftJoinAndSelect('room.hostel', 'hostel')
-      .leftJoinAndSelect('room.roomType', 'roomType');
+    const where: Prisma.RoomWhereInput = {};
 
-    // Apply filters
-    if (hostelId) {
-      queryBuilder.andWhere('room.hostelId = :hostelId', { hostelId });
-    }
-
-    if (roomTypeId) {
-      queryBuilder.andWhere('room.roomTypeId = :roomTypeId', { roomTypeId });
-    }
-
-    if (status) {
-      queryBuilder.andWhere('room.status = :status', { status });
-    }
-
-    if (floor !== undefined) {
-      queryBuilder.andWhere('room.floor = :floor', { floor });
-    }
-
-    if (gender) {
-      queryBuilder.andWhere('roomType.gender = :gender', { gender });
-    }
+    if (hostelId) where.hostelId = hostelId;
+    if (roomTypeId) where.roomTypeId = roomTypeId;
+    if (status) where.status = status;
+    if (floor !== undefined) where.floor = floor;
+    if (gender) where.roomType = { gender };
 
     if (available !== undefined) {
       if (available) {
-        queryBuilder.andWhere('room.status = :availableStatus', { availableStatus: RoomStatus.AVAILABLE })
-                   .andWhere('room.currentOccupancy < room.maxOccupancy');
-      } else {
-        queryBuilder.andWhere('room.currentOccupancy >= room.maxOccupancy OR room.status != :availableStatus', 
-                              { availableStatus: RoomStatus.AVAILABLE });
+        where.status = ROOM_STATUS.AVAILABLE;
+        where.currentOccupancy = { lt: where.maxOccupancy as any };
       }
     }
 
     if (search) {
-      queryBuilder.andWhere('(room.roomNumber ILIKE :search OR hostel.name ILIKE :search)', 
-                           { search: `%${search}%` });
+      where.OR = [
+        { roomNumber: { contains: search, mode: 'insensitive' } },
+        { hostel: { name: { contains: search, mode: 'insensitive' } } }
+      ];
     }
 
-    // Apply sorting
-    queryBuilder.orderBy(`room.${sortBy}`, sortOrder);
-
-    // Apply pagination
     const offset = (page - 1) * limit;
-    queryBuilder.skip(offset).take(limit);
 
-    const [rooms, total] = await queryBuilder.getManyAndCount();
+    const [rooms, total] = await Promise.all([
+      this.prisma.room.findMany({
+        where,
+        include: { hostel: true, roomType: true },
+        orderBy: { [sortBy]: sortOrder },
+        skip: offset,
+        take: limit,
+      }),
+      this.prisma.room.count({ where })
+    ]);
 
     return {
       rooms,
@@ -298,10 +245,10 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   }
 
   // Get room by ID
-  async getRoomById(id: string): Promise<Room> {
-    const room = await this.roomRepository.findOne({
+  async getRoomById(id: string) {
+    const room = await this.prisma.room.findUnique({
       where: { id },
-      relations: ['hostel', 'roomType']
+      include: { hostel: true, roomType: true }
     });
 
     if (!room) {
@@ -312,79 +259,61 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   }
 
   // Get rooms by hostel ID
-  async getRoomsByHostelId(hostelId: string, filterDto: Partial<RoomFilterDto> = {}): Promise<Room[]> {
+  async getRoomsByHostelId(hostelId: string, filterDto: Partial<RoomFilterDto> = {}) {
     const { status, floor, available, gender } = filterDto;
 
-    const queryBuilder = this.roomRepository
-      .createQueryBuilder('room')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .where('room.hostelId = :hostelId', { hostelId });
+    const where: Prisma.RoomWhereInput = { hostelId };
 
-    if (status) {
-      queryBuilder.andWhere('room.status = :status', { status });
-    }
+    if (status) where.status = status;
+    if (floor !== undefined) where.floor = floor;
+    if (gender) where.roomType = { gender };
 
-    if (floor !== undefined) {
-      queryBuilder.andWhere('room.floor = :floor', { floor });
-    }
-
-    if (gender) {
-      queryBuilder.andWhere('roomType.gender = :gender', { gender });
-    }
-
-    let rooms = await queryBuilder
-      .orderBy('room.roomNumber', 'ASC')
-      .getMany();
+    let rooms = await this.prisma.room.findMany({
+      where,
+      include: { roomType: true },
+      orderBy: { roomNumber: 'asc' }
+    });
 
     // Filter by availability if specified
     if (available !== undefined) {
-      rooms = rooms.filter(room => room.isAvailable() === available);
+      rooms = rooms.filter(room => {
+        const isAvailable = room.status === ROOM_STATUS.AVAILABLE && room.currentOccupancy < room.maxOccupancy;
+        return isAvailable === available;
+      });
     }
 
     return rooms;
   }
 
-  // Get available rooms by gender compatibility (NEW METHOD)
-  async getAvailableRoomsByGender(
-    hostelId: string, 
-    userGender: string, 
-    roomTypeId?: string
-  ): Promise<Room[]> {
-    const queryBuilder = this.roomRepository
-      .createQueryBuilder('room')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .where('room.hostelId = :hostelId', { hostelId })
-      .andWhere('room.status = :status', { status: RoomStatus.AVAILABLE })
-      .andWhere('room.currentOccupancy < room.maxOccupancy');
+  // Get available rooms by gender compatibility
+  async getAvailableRoomsByGender(hostelId: string, userGender: string, roomTypeId?: string) {
+    const where: Prisma.RoomWhereInput = {
+      hostelId,
+      status: ROOM_STATUS.AVAILABLE,
+    };
 
-    // Filter by gender compatibility
     if (userGender && userGender.toLowerCase() !== 'mixed') {
-      queryBuilder.andWhere(
-        '(roomType.gender = :userGender OR roomType.gender = :mixed)',
-        { 
-          userGender: userGender.toLowerCase(), 
-          mixed: RoomGender.MIXED 
-        }
-      );
+      where.roomType = {
+        gender: { in: [userGender.toLowerCase() as RoomGender, 'mixed'] }
+      };
     }
 
-    if (roomTypeId) {
-      queryBuilder.andWhere('room.roomTypeId = :roomTypeId', { roomTypeId });
-    }
+    if (roomTypeId) where.roomTypeId = roomTypeId;
 
-    return queryBuilder
-      .orderBy('room.roomNumber', 'ASC')
-      .getMany();
+    const rooms = await this.prisma.room.findMany({
+      where,
+      include: { roomType: true },
+      orderBy: { roomNumber: 'asc' }
+    });
+
+    return rooms.filter(room => room.currentOccupancy < room.maxOccupancy);
   }
 
-  // Validate gender compatibility for booking (NEW METHOD)
-  async validateGenderCompatibility(
-    roomId: string, 
-    userGender: string
-  ): Promise<{ compatible: boolean; reason?: string }> {
-    const room = await this.roomRepository.findOne({
+  // Validate gender compatibility for booking
+  async validateGenderCompatibility(roomId: string, userGender: string): Promise<{ compatible: boolean; reason?: string }> {
+    const room = await this.prisma.room.findUnique({
       where: { id: roomId },
-      relations: ['roomType']
+      include: { roomType: true }
     });
 
     if (!room) {
@@ -396,22 +325,24 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
     }
 
     // Check if room type allows this gender
-    const isCompatible = room.roomType.isGenderCompatible(userGender);
-    
+    const isCompatible = room.roomType.gender === 'mixed' || room.roomType.gender === userGender.toLowerCase();
+
     if (!isCompatible) {
+      const genderDisplay = room.roomType.gender === 'male' ? 'Male Only'
+        : room.roomType.gender === 'female' ? 'Female Only' : 'Mixed Gender';
       return {
         compatible: false,
-        reason: `This room is designated for ${room.roomType.getGenderDisplayName()} only`
+        reason: `This room is designated for ${genderDisplay} only`
       };
     }
 
     // Check if room has space
-    if (!room.hasSpace()) {
+    if (room.currentOccupancy >= room.maxOccupancy) {
       return { compatible: false, reason: 'Room is at full capacity' };
     }
 
     // Check if room is available
-    if (room.status !== RoomStatus.AVAILABLE) {
+    if (room.status !== ROOM_STATUS.AVAILABLE) {
       return { compatible: false, reason: 'Room is not available' };
     }
 
@@ -419,18 +350,18 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   }
 
   // Update room
-  async updateRoom(id: string, updateRoomDto: UpdateRoomDto): Promise<Room> {
+  async updateRoom(id: string, updateRoomDto: UpdateRoomDto) {
     const room = await this.getRoomById(id);
 
     // If updating room number, check for conflicts
     if (updateRoomDto.roomNumber && updateRoomDto.roomNumber !== room.roomNumber) {
-      const existingRoom = await this.roomRepository.findOne({
-        where: { 
-          hostelId: room.hostelId, 
-          roomNumber: updateRoomDto.roomNumber 
+      const existingRoom = await this.prisma.room.findFirst({
+        where: {
+          hostelId: room.hostelId,
+          roomNumber: updateRoomDto.roomNumber
         }
       });
-      
+
       if (existingRoom) {
         throw new ConflictException(`Room number ${updateRoomDto.roomNumber} already exists in this hostel`);
       }
@@ -441,12 +372,18 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       throw new BadRequestException(`Max occupancy cannot be less than current occupancy (${room.currentOccupancy})`);
     }
 
-    Object.assign(room, updateRoomDto);
-    return await this.roomRepository.save(room);
+    return this.prisma.room.update({
+      where: { id },
+      data: {
+        ...updateRoomDto,
+        updatedAt: new Date(),
+      },
+      include: { hostel: true, roomType: true }
+    });
   }
 
   // Update room occupancy
-  async updateOccupancy(id: string, occupancyDto: UpdateOccupancyDto): Promise<Room> {
+  async updateOccupancy(id: string, occupancyDto: UpdateOccupancyDto) {
     const room = await this.getRoomById(id);
     const { currentOccupancy } = occupancyDto;
 
@@ -458,29 +395,38 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       throw new BadRequestException(`Current occupancy cannot exceed max occupancy (${room.maxOccupancy})`);
     }
 
-    room.currentOccupancy = currentOccupancy;
-
     // Auto-update status based on occupancy
-    if (currentOccupancy === 0 && room.status === RoomStatus.OCCUPIED) {
-      room.status = RoomStatus.AVAILABLE;
-    } else if (currentOccupancy > 0 && room.status === RoomStatus.AVAILABLE) {
-      room.status = RoomStatus.OCCUPIED;
+    let newStatus = room.status;
+    if (currentOccupancy === 0 && room.status === ROOM_STATUS.OCCUPIED) {
+      newStatus = ROOM_STATUS.AVAILABLE;
+    } else if (currentOccupancy > 0 && room.status === ROOM_STATUS.AVAILABLE) {
+      newStatus = ROOM_STATUS.OCCUPIED;
     }
 
-    return await this.roomRepository.save(room);
+    return this.prisma.room.update({
+      where: { id },
+      data: {
+        currentOccupancy,
+        status: newStatus,
+        updatedAt: new Date(),
+      },
+      include: { hostel: true, roomType: true }
+    });
   }
 
   // Change room status
-  async changeRoomStatus(id: string, status: RoomStatus): Promise<Room> {
+  async changeRoomStatus(id: string, status: string) {
     const room = await this.getRoomById(id);
 
-    // Validate status change
-    if (status === RoomStatus.AVAILABLE && room.currentOccupancy > 0) {
+    if (status === ROOM_STATUS.AVAILABLE && room.currentOccupancy > 0) {
       throw new BadRequestException('Cannot set room as available while it has occupants');
     }
 
-    room.status = status;
-    return await this.roomRepository.save(room);
+    return this.prisma.room.update({
+      where: { id },
+      data: { status, updatedAt: new Date() },
+      include: { hostel: true, roomType: true }
+    });
   }
 
   // Delete room
@@ -491,13 +437,13 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       throw new BadRequestException('Cannot delete room with current occupants');
     }
 
-    await this.roomRepository.remove(room);
+    await this.prisma.room.delete({ where: { id } });
   }
 
   // Bulk delete rooms
   async bulkDeleteRooms(ids: string[]): Promise<void> {
-    const rooms = await this.roomRepository.find({
-      where: { id: In(ids) }
+    const rooms = await this.prisma.room.findMany({
+      where: { id: { in: ids } }
     });
 
     if (rooms.length !== ids.length) {
@@ -510,42 +456,37 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       throw new BadRequestException(`Cannot delete rooms with occupants: ${occupiedNumbers.join(', ')}`);
     }
 
-    await this.roomRepository.remove(rooms);
+    await this.prisma.room.deleteMany({ where: { id: { in: ids } } });
   }
 
-  // Get available rooms by hostel and room type (updated with gender support)
-  async getAvailableRooms(hostelId: string, roomTypeId?: string, userGender?: string): Promise<Room[]> {
-    const queryBuilder = this.roomRepository
-      .createQueryBuilder('room')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .where('room.hostelId = :hostelId', { hostelId })
-      .andWhere('room.status = :status', { status: RoomStatus.AVAILABLE });
+  // Get available rooms by hostel and room type
+  async getAvailableRooms(hostelId: string, roomTypeId?: string, userGender?: string) {
+    const where: Prisma.RoomWhereInput = {
+      hostelId,
+      status: ROOM_STATUS.AVAILABLE,
+    };
 
-    if (roomTypeId) {
-      queryBuilder.andWhere('room.roomTypeId = :roomTypeId', { roomTypeId });
-    }
+    if (roomTypeId) where.roomTypeId = roomTypeId;
 
-    // Filter by gender if provided
     if (userGender && userGender.toLowerCase() !== 'mixed') {
-      queryBuilder.andWhere(
-        '(roomType.gender = :userGender OR roomType.gender = :mixed)',
-        { 
-          userGender: userGender.toLowerCase(), 
-          mixed: RoomGender.MIXED 
-        }
-      );
+      where.roomType = {
+        gender: { in: [userGender.toLowerCase() as RoomGender, 'mixed'] }
+      };
     }
 
-    const rooms = await queryBuilder.getMany();
+    const rooms = await this.prisma.room.findMany({
+      where,
+      include: { roomType: true }
+    });
 
-    return rooms.filter(room => room.hasSpace());
+    return rooms.filter(room => room.currentOccupancy < room.maxOccupancy);
   }
 
-  // Get room statistics for a hostel (updated with gender stats)
+  // Get room statistics for a hostel
   async getRoomStatistics(hostelId: string) {
-    const rooms = await this.roomRepository.find({
+    const rooms = await this.prisma.room.findMany({
       where: { hostelId },
-      relations: ['roomType']
+      include: { roomType: true }
     });
 
     const stats = {
@@ -560,30 +501,22 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       byRoomType: {} as Record<string, any>,
       byFloor: {} as Record<number, any>,
       byGender: {
-        [RoomGender.MALE]: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 },
-        [RoomGender.FEMALE]: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 },
-        [RoomGender.MIXED]: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 }
+        male: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 },
+        female: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 },
+        mixed: { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 }
       }
     };
 
     rooms.forEach(room => {
-      // Status counts
       stats[room.status]++;
-      
-      // Capacity and occupancy
       stats.totalCapacity += room.maxOccupancy;
       stats.currentOccupancy += room.currentOccupancy;
 
-      // By room type
       const typeName = room.roomType?.name || 'Unknown';
       if (!stats.byRoomType[typeName]) {
         stats.byRoomType[typeName] = {
-          count: 0,
-          available: 0,
-          occupied: 0,
-          capacity: 0,
-          currentOccupancy: 0,
-          gender: room.roomType?.gender || RoomGender.MIXED
+          count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0,
+          gender: room.roomType?.gender || 'mixed'
         };
       }
       stats.byRoomType[typeName].count++;
@@ -591,23 +524,17 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       stats.byRoomType[typeName].capacity += room.maxOccupancy;
       stats.byRoomType[typeName].currentOccupancy += room.currentOccupancy;
 
-      // By gender
-      const gender = room.roomType?.gender || RoomGender.MIXED;
-      stats.byGender[gender].count++;
-      stats.byGender[gender][room.status]++;
-      stats.byGender[gender].capacity += room.maxOccupancy;
-      stats.byGender[gender].currentOccupancy += room.currentOccupancy;
+      const gender = room.roomType?.gender || 'mixed';
+      if (stats.byGender[gender]) {
+        stats.byGender[gender].count++;
+        stats.byGender[gender][room.status]++;
+        stats.byGender[gender].capacity += room.maxOccupancy;
+        stats.byGender[gender].currentOccupancy += room.currentOccupancy;
+      }
 
-      // By floor
       if (room.floor !== null) {
         if (!stats.byFloor[room.floor]) {
-          stats.byFloor[room.floor] = {
-            count: 0,
-            available: 0,
-            occupied: 0,
-            capacity: 0,
-            currentOccupancy: 0
-          };
+          stats.byFloor[room.floor] = { count: 0, available: 0, occupied: 0, capacity: 0, currentOccupancy: 0 };
         }
         stats.byFloor[room.floor].count++;
         stats.byFloor[room.floor][room.status]++;
@@ -616,46 +543,62 @@ async create(createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
       }
     });
 
-    // Calculate occupancy rate
-    stats.occupancyRate = stats.totalCapacity > 0 
-      ? (stats.currentOccupancy / stats.totalCapacity) * 100 
+    stats.occupancyRate = stats.totalCapacity > 0
+      ? (stats.currentOccupancy / stats.totalCapacity) * 100
       : 0;
 
     return stats;
   }
 
-  // Search rooms with advanced filters (updated with gender support)
+  // Search rooms with advanced filters
   async searchRooms(searchTerm: string, filters: RoomFilterDto = {}) {
-    const queryBuilder = this.roomRepository
-      .createQueryBuilder('room')
-      .leftJoinAndSelect('room.hostel', 'hostel')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .where('(room.roomNumber ILIKE :search OR hostel.name ILIKE :search OR roomType.name ILIKE :search)', 
-             { search: `%${searchTerm}%` });
+    const where: Prisma.RoomWhereInput = {
+      OR: [
+        { roomNumber: { contains: searchTerm, mode: 'insensitive' } },
+        { hostel: { name: { contains: searchTerm, mode: 'insensitive' } } },
+        { roomType: { name: { contains: searchTerm, mode: 'insensitive' } } }
+      ]
+    };
 
-    // Apply additional filters
-    if (filters.hostelId) {
-      queryBuilder.andWhere('room.hostelId = :hostelId', { hostelId: filters.hostelId });
-    }
-
-    if (filters.status) {
-      queryBuilder.andWhere('room.status = :status', { status: filters.status });
-    }
-
-    if (filters.gender) {
-      queryBuilder.andWhere('roomType.gender = :gender', { gender: filters.gender });
-    }
+    if (filters.hostelId) where.hostelId = filters.hostelId;
+    if (filters.status) where.status = filters.status;
+    if (filters.gender) where.roomType = { ...where.roomType as any, gender: filters.gender };
 
     if (filters.available) {
-      queryBuilder.andWhere('room.status = :availableStatus', { availableStatus: RoomStatus.AVAILABLE })
-                   .andWhere('room.currentOccupancy < room.maxOccupancy');
+      where.status = ROOM_STATUS.AVAILABLE;
     }
 
-    const rooms = await queryBuilder
-      .orderBy('hostel.name', 'ASC')
-      .addOrderBy('room.roomNumber', 'ASC')
-      .getMany();
+    return this.prisma.room.findMany({
+      where,
+      include: { hostel: true, roomType: true },
+      orderBy: [
+        { hostel: { name: 'asc' } },
+        { roomNumber: 'asc' }
+      ]
+    });
+  }
 
-    return rooms;
+  async bulkUpdateStatus(ids: string[], status: string) {
+    const rooms = await this.prisma.room.findMany({
+      where: { id: { in: ids } }
+    });
+
+    if (rooms.length !== ids.length) {
+      throw new NotFoundException('Some rooms were not found');
+    }
+
+    // Check for occupancy conflicts if setting to available
+    if (status === 'available') {
+      const occupiedRooms = rooms.filter(room => room.currentOccupancy > 0);
+      if (occupiedRooms.length > 0) {
+        const occupiedNumbers = occupiedRooms.map(room => room.roomNumber);
+        throw new BadRequestException(`Cannot set rooms to available while they have occupants: ${occupiedNumbers.join(', ')}`);
+      }
+    }
+
+    return this.prisma.room.updateMany({
+      where: { id: { in: ids } },
+      data: { status, updatedAt: new Date() }
+    });
   }
 }

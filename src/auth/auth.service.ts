@@ -1,11 +1,11 @@
 import { BadRequestException, ConflictException, Inject, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
-import { SupabaseService } from '../supabase/supabase.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { User } from 'src/entities/user.entity';
+import { JwtUser } from './types/jwt-user';
 import * as bcrypt from 'bcrypt';
 import { MailService } from 'src/mail/mail.service';
 import { OnboardingDto } from 'src/obboarding/dto/onboarding.dto';
@@ -32,91 +32,63 @@ export interface UserDetails {
     id: string;
     name: string;
     domain: string;
-    location: string;
   };
 }
 
 @Injectable()
 export class AuthService {
   constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache,
-    private readonly supabase: SupabaseService,
+    private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
   ) {}
 
-  async validateUser(email: string, pass: string): Promise<User | null> {
-    const { data: user, error } = await this.supabase
-      .client
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
+  async validateUser(email: string, pass: string): Promise<any | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
 
-    if (error || !user) return null;
+    if (!user) return null;
 
-    const isValid = await bcrypt.compare(pass, user.password_hash);
+    const isValid = await bcrypt.compare(pass, user.passwordHash);
     return isValid ? user : null;
   }
 
-  async validateGoogleUser(googleUser: any): Promise<User> {
+  async validateGoogleUser(googleUser: any): Promise<any> {
     const { email, google_id, name } = googleUser;
 
     // Check if user exists
-    const { data: existingUser, error: findError } = await this.supabase
-      .client
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+    });
 
     if (existingUser) {
       // If user exists but doesn't have google_id, update it
-      if (!existingUser.google_id) {
-        const { data: updatedUser, error: updateError } = await this.supabase
-          .client
-          .from('users')
-          .update({ google_id })
-          .eq('id', existingUser.id)
-          .select('*')
-          .single();
-        
-        if (updateError) {
-          console.error('Supabase update error:', updateError);
-          throw new InternalServerErrorException(`Failed to update user with Google ID: ${updateError.message}`);
-        }
-        return updatedUser;
+      if (!existingUser.googleId) {
+        return await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: { googleId: google_id },
+        });
       }
       return existingUser;
     }
 
     // Create new user
-    const userData = {
-      email,
-      google_id,
-      name,
-      role: 'student',
-      is_verified: true, // Google emails are verified
-      onboarding_completed: false,
-      created_at: new Date().toISOString(),
-      status: 'verified',
-    };
-
-    const { data: newUser, error: createError } = await this.supabase
-      .client
-      .from('users')
-      .insert([userData])
-      .select('*')
-      .single();
-
-    if (createError) {
-      console.error('Failed to create Google user:', createError);
-      throw new InternalServerErrorException('Failed to create user from Google profile');
-    }
-
-    return newUser;
+    return await this.prisma.user.create({
+      data: {
+        email,
+        googleId: google_id,
+        name,
+        passwordHash: 'GOOGLE_AUTH_USER', // Placeholder for required field
+        role: 'student',
+        isVerified: true, // Google emails are verified
+        onboardingCompleted: false,
+        status: 'verified',
+      },
+    });
   }
 
-async register(registerDto: RegisterDto): Promise<User> {
+async register(registerDto: RegisterDto): Promise<any> {
     try {
       // Check if terms are accepted
       if (!registerDto.terms_accepted) {
@@ -124,14 +96,12 @@ async register(registerDto: RegisterDto): Promise<User> {
       }
 
       // Check if user already exists
-      const { data: existingUser } = await this.supabase
-        .client
-        .from('users')
-        .select('id, is_verified')
-        .eq('email', registerDto.email)
-        .single();
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: registerDto.email },
+        select: { id: true, isVerified: true }
+      });
 
-      if (existingUser?.is_verified) {
+      if (existingUser?.isVerified) {
         throw new ConflictException('User already exists');
       }
 
@@ -140,45 +110,28 @@ async register(registerDto: RegisterDto): Promise<User> {
 
       const hashedPassword = await bcrypt.hash(registerDto.password_hash, 10);
 
-      const userData = {
-        ...registerDto,
-        password_hash: hashedPassword,
-        verification_token: verificationToken,
-        verification_token_expires_at: tokenExpiry.toISOString(),
-        is_verified: true,
-        terms_accepted: registerDto.terms_accepted,
-        terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
-        created_at: registerDto.created_at ? registerDto.created_at.toISOString() : new Date().toISOString(),
+      const userData: any = {
+        email: registerDto.email,
+        name: registerDto.name,
+        phone: registerDto.phone,
+        passwordHash: hashedPassword,
+        verificationToken: verificationToken,
+        verificationTokenExpiresAt: tokenExpiry,
+        isVerified: true, // Auto-verify for now as per previous logic
+        termsAccepted: registerDto.terms_accepted,
+        termsAcceptedAt: registerDto.terms_accepted ? new Date() : null,
       };
 
       let user;
-      if (existingUser && !existingUser.is_verified) {
-        const { data, error } = await this.supabase
-          .client
-          .from('users')
-          .update(userData)
-          .eq('email', registerDto.email)
-          .select('*')
-          .single();
-
-        if (error) throw new InternalServerErrorException(error.message || 'Failed to update user');
-        user = data;
+      if (existingUser && !existingUser.isVerified) {
+        user = await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: userData,
+        });
       } else {
-        const { data, error } = await this.supabase
-          .client
-          .from('users')
-          .insert([userData])
-          .select('*')
-          .single();
-        
-        if (error) {
-          console.error('Supabase error:', error);
-          if (error.code === '23505') {
-            throw new ConflictException('User already exists');
-          }
-          throw new InternalServerErrorException(error.message || 'Failed to create user');
-        }
-        user = data;
+        user = await this.prisma.user.create({
+          data: userData,
+        });
       }
 
       // Send verification email
@@ -186,11 +139,10 @@ async register(registerDto: RegisterDto): Promise<User> {
         await this.mailService.sendAdminVerificationEmail(user.email, verificationToken);
       } catch (error) {
         console.error('Failed to send verification email:', error);
-        // Don't throw error here to avoid rolling back user creation
       }
 
       // Remove sensitive data from response
-      const { verification_token, verification_token_expires_at, password_hash, ...safeUser } = user;
+      const { verificationToken: vt, verificationTokenExpiresAt: vtea, passwordHash, ...safeUser } = user;
       return safeUser;
     } catch (error) {
       console.error('Registration error:', error);
@@ -198,21 +150,19 @@ async register(registerDto: RegisterDto): Promise<User> {
     }
   }
 
-  async registerStudent(registerDto: RegisterDto): Promise<User> {
+  async registerStudent(registerDto: RegisterDto): Promise<any> {
     try {
       if (!registerDto.terms_accepted) {
         throw new BadRequestException('You must accept the terms and conditions');
       }
 
       // Check if user already exists
-      const { data: existingUser } = await this.supabase
-        .client
-        .from('users')
-        .select('id, is_verified')
-        .eq('email', registerDto.email)
-        .single();
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: registerDto.email },
+        select: { id: true, isVerified: true }
+      });
 
-      if (existingUser?.is_verified) {
+      if (existingUser?.isVerified) {
         throw new ConflictException('User already exists');
       }
 
@@ -221,48 +171,30 @@ async register(registerDto: RegisterDto): Promise<User> {
 
       const hashedPassword = await bcrypt.hash(registerDto.password_hash, 10);
 
-      const userData = {
-        ...registerDto,
-        password_hash: hashedPassword,
+      const userData: any = {
+        email: registerDto.email,
         name: registerDto.name || null,
+        phone: registerDto.phone || null,
         gender: registerDto.gender || null,
-        verification_token: verificationToken,
-        verification_token_expires_at: tokenExpiry.toISOString(),
-        is_verified: true,
-        onboarding_completed: false,
-        terms_accepted: registerDto.terms_accepted,
-        terms_accepted_at: registerDto.terms_accepted ? new Date().toISOString() : null,
-        created_at: registerDto.created_at ? registerDto.created_at.toISOString() : new Date().toISOString(),
+        passwordHash: hashedPassword,
+        verificationToken: verificationToken,
+        verificationTokenExpiresAt: tokenExpiry,
+        isVerified: true,
+        onboardingCompleted: false,
+        termsAccepted: registerDto.terms_accepted,
+        termsAcceptedAt: registerDto.terms_accepted ? new Date() : null,
       };
 
       let user;
-      if (existingUser && !existingUser.is_verified) {
-        const { data, error } = await this.supabase
-          .client
-          .from('users')
-          .update(userData)
-          .eq('email', registerDto.email)
-          .select('*')
-          .single();
-
-        if (error) throw new InternalServerErrorException(error.message || 'Failed to update user');
-        user = data;
+      if (existingUser && !existingUser.isVerified) {
+        user = await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: userData,
+        });
       } else {
-        const { data, error } = await this.supabase
-          .client
-          .from('users')
-          .insert([userData])
-          .select('*')
-          .single();
-        
-        if (error) {
-          console.error('Supabase error:', error);
-          if (error.code === '23505') {
-            throw new ConflictException('User already exists');
-          }
-          throw new InternalServerErrorException(error.message || 'Failed to create user');
-        }
-        user = data;
+        user = await this.prisma.user.create({
+          data: userData,
+        });
       }
 
       try {
@@ -271,7 +203,7 @@ async register(registerDto: RegisterDto): Promise<User> {
         console.error('Failed to send verification email:', error);
       }
 
-      const { verification_token, verification_token_expires_at, password_hash, ...safeUser } = user;
+      const { verificationToken: vt, verificationTokenExpiresAt: vtea, passwordHash, ...safeUser } = user;
       return safeUser;
     } catch (error) {
       console.error('Student registration error:', error);
@@ -279,60 +211,73 @@ async register(registerDto: RegisterDto): Promise<User> {
     }
   }
 
-  async completeOnboarding(userId: string, onboardingDto: OnboardingDto): Promise<UserDetails> {
+  async completeOnboarding(userId: string, onboardingDto: OnboardingDto): Promise<any> {
     try {
       const updateData: any = { ...onboardingDto };
       
+      // Clear cache for this user immediately to prevent stale profile reads
+      const cacheKey = `user_profile:${userId}`;
+      await this.cacheManager.del(cacheKey);
+      
       // If school_id is provided, verify it
       if (onboardingDto.school_id) {
-        const { data: school, error: schoolError } = await this.supabase
-          .client
-          .from('schools')
-          .select('*')
-          .eq('id', onboardingDto.school_id)
-          .single();
+        const school = await this.prisma.school.findUnique({
+          where: { id: onboardingDto.school_id }
+        });
 
-        if (schoolError || !school) {
+        if (!school) {
           throw new BadRequestException('Invalid school selected');
         }
       }
 
       // Check current completion status
-      const { data: currentUser } = await this.supabase.client
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single();
+      const currentUser = await this.prisma.user.findUnique({
+        where: { id: userId }
+      });
 
-      const mergedData = { ...currentUser, ...updateData };
+      if (!currentUser) throw new NotFoundException('User not found');
+
+      // Map DTO fields to Prisma fields for consistent check
+      const merged = {
+        name: updateData.name ?? currentUser.name,
+        phone: updateData.phone ?? currentUser.phone,
+        gender: updateData.gender ?? currentUser.gender,
+        schoolId: updateData.school_id ?? currentUser.schoolId,
+        emergencyContactName: updateData.emergency_contact_name ?? currentUser.emergencyContactName,
+        emergencyContactPhone: updateData.emergency_contact_phone ?? currentUser.emergencyContactPhone,
+        emergencyContactRelationship: updateData.emergency_contact_relationship ?? currentUser.emergencyContactRelationship,
+      };
+
       const isComplete = !!(
-        mergedData.name &&
-        mergedData.phone &&
-        mergedData.gender &&
-        mergedData.school_id &&
-        mergedData.emergency_contact_name &&
-        mergedData.emergency_contact_phone &&
-        mergedData.emergency_contact_relationship
+        merged.name &&
+        merged.phone &&
+        merged.gender &&
+        merged.schoolId &&
+        merged.emergencyContactName &&
+        merged.emergencyContactPhone &&
+        merged.emergencyContactRelationship
       );
 
+      const prismaUpdateData: any = {};
+      if (updateData.name) prismaUpdateData.name = updateData.name;
+      if (updateData.phone) prismaUpdateData.phone = updateData.phone;
+      if (updateData.gender) prismaUpdateData.gender = updateData.gender;
+      if (updateData.school_id) prismaUpdateData.schoolId = updateData.school_id;
+      if (updateData.emergency_contact_name) prismaUpdateData.emergencyContactName = updateData.emergency_contact_name;
+      if (updateData.emergency_contact_phone) prismaUpdateData.emergencyContactPhone = updateData.emergency_contact_phone;
+      if (updateData.emergency_contact_relationship) prismaUpdateData.emergencyContactRelationship = updateData.emergency_contact_relationship;
+      if (updateData.emergency_contact_email) prismaUpdateData.emergencyContactEmail = updateData.emergency_contact_email;
+      if (updateData.last_onboarding_step) prismaUpdateData.lastOnboardingStep = updateData.last_onboarding_step;
+      
       if (isComplete) {
-        updateData.onboarding_completed = true;
-        updateData.status = 'verified';
+        prismaUpdateData.onboardingCompleted = true;
+        prismaUpdateData.status = 'verified';
       }
 
-      // Update user with onboarding data
-      const { data: updatedUser, error: updateError } = await this.supabase
-        .client
-        .from('users')
-        .update(updateData)
-        .eq('id', userId)
-        .select('*')
-        .single();
-
-      if (updateError) {
-        console.error('Onboarding update error:', updateError);
-        throw new InternalServerErrorException('Failed to update onboarding progress');
-      }
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: prismaUpdateData,
+      });
 
       return this.getUserProfile(userId);
     } catch (error) {
@@ -347,20 +292,23 @@ async register(registerDto: RegisterDto): Promise<User> {
     has_emergency_contact: boolean;
   }> {
     try {
-      const { data: user, error } = await this.supabase.client
-        .from('users')
-        .select('onboarding_completed, school_id, emergency_contact_name')
-        .eq('id', userId)
-        .single();
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          onboardingCompleted: true,
+          schoolId: true,
+          emergencyContactName: true
+        }
+      });
 
-      if (error || !user) {
+      if (!user) {
         throw new NotFoundException('User not found');
       }
 
       return {
-        onboarding_completed: user.onboarding_completed || false,
-        school_id: user.school_id,
-        has_emergency_contact: !!user.emergency_contact_name,
+        onboarding_completed: user.onboardingCompleted || false,
+        school_id: user.schoolId || undefined,
+        has_emergency_contact: !!user.emergencyContactName,
       };
     } catch (error) {
       console.error('Get onboarding status error:', error);
@@ -368,7 +316,7 @@ async register(registerDto: RegisterDto): Promise<User> {
     }
   }
 
-  async verifyEmail(token: string): Promise<{ message: string; user?: Partial<User> }> {
+  async verifyEmail(token: string): Promise<{ message: string; user?: any }> {
     try {
       if (!token || typeof token !== 'string') {
         throw new BadRequestException('Token is required');
@@ -379,60 +327,51 @@ async register(registerDto: RegisterDto): Promise<User> {
         throw new BadRequestException('Invalid verification token format');
       }
 
-      const { data: user, error: userError } = await this.supabase
-        .client
-        .from('users')
-        .select('*')
-        .eq('verification_token', cleanToken)
-        .single();
+      const user = await this.prisma.user.findFirst({
+        where: { verificationToken: cleanToken }
+      });
 
-      if (userError) {
-        if (userError.code === 'PGRST116' || userError.message?.includes('No rows found')) {
-          throw new BadRequestException('Invalid verification token');
-        }
-        throw new InternalServerErrorException('Database error during verification');
+      if (!user) {
+        throw new BadRequestException('Invalid verification token');
       }
 
-      if (user.is_verified) {
+      if (user.isVerified) {
         return {
           message: 'Email is already verified. You can proceed to login.',
           user: {
             id: user.id,
             email: user.email,
-            is_verified: true
+            isVerified: true
           }
         };
       }
 
-      if (user.verification_token_expires_at) {
+      if (user.verificationTokenExpiresAt) {
         const now = new Date();
-        const expiryDate = new Date(user.verification_token_expires_at);
+        const expiryDate = new Date(user.verificationTokenExpiresAt);
         
         if (now > expiryDate) {
           throw new BadRequestException('Verification token has expired. Please request a new verification email.');
         }
       }
 
-      const updateData = {
-        is_verified: true,
-        verification_token: null,
-        verification_token_expires_at: null,
-        verified_at: new Date().toISOString(),
-        status: 'verified' as const
-      };
-
-      const { data: updatedUser, error: updateError } = await this.supabase
-        .client
-        .from('users')
-        .update(updateData)
-        .eq('id', user.id)
-        .select('id, email, is_verified, verified_at, onboarding_completed')
-        .single();
-
-      if (updateError) {
-        console.error('Update error:', updateError);
-        throw new InternalServerErrorException('Failed to update user verification status');
-      }
+      const updatedUser = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          isVerified: true,
+          verificationToken: null,
+          verificationTokenExpiresAt: null,
+          verifiedAt: new Date(),
+          status: 'verified'
+        },
+        select: {
+          id: true,
+          email: true,
+          isVerified: true,
+          verifiedAt: true,
+          onboardingCompleted: true
+        }
+      });
 
       return {
         message: 'Email verified successfully',
@@ -441,27 +380,22 @@ async register(registerDto: RegisterDto): Promise<User> {
 
     } catch (error) {
       console.error('Verify email error:', error);
-      
-      if (error instanceof BadRequestException || error instanceof InternalServerErrorException) {
-        throw error;
-      }
-      
-      throw new InternalServerErrorException('An unexpected error occurred during verification');
+      throw error;
     }
   }
 
-  async login(user: User, inputPassword?: string) {
+  async login(user: any, inputPassword?: string) {
     try {
       if (inputPassword) {
-        const isMatch = await bcrypt.compare(inputPassword, user.password_hash);
+        const isMatch = await bcrypt.compare(inputPassword, user.passwordHash);
         if (!isMatch) {
           throw new UnauthorizedException('Invalid credentials');
         }
-      } else if (!user.google_id) {
+      } else if (!user.googleId) {
         throw new UnauthorizedException('Invalid credentials');
       }
 
-      if (user.role !== 'super_admin' && !user.terms_accepted) {
+      if (user.role !== 'super_admin' && !user.termsAccepted) {
         throw new UnauthorizedException('Please accept the terms and conditions to continue');
       }
 
@@ -477,13 +411,13 @@ async register(registerDto: RegisterDto): Promise<User> {
           id: user.id,
           email: user.email,
           role: user.role,
-          is_verified: user.is_verified,
-          name: user.name,
-          phone: user.phone,
-          gender: user.gender,
-          school_id: user.school_id,
-          terms_accepted: user.terms_accepted,
-          onboarding_completed: user.onboarding_completed || false,
+          is_verified: user.isVerified,
+          name: user.name || undefined,
+          phone: user.phone || undefined,
+          gender: user.gender || undefined,
+          school_id: user.schoolId || undefined,
+          terms_accepted: user.termsAccepted,
+          onboarding_completed: user.onboardingCompleted || false,
         },
       };
     } catch (error) {
@@ -493,36 +427,28 @@ async register(registerDto: RegisterDto): Promise<User> {
   }
 
   async resendVerificationEmail(email: string): Promise<{ message: string }> {
-    const { data: user, error } = await this.supabase
-      .client
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
+    const user = await this.prisma.user.findUnique({
+      where: { email }
+    });
 
-    if (error || !user) {
+    if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    if (user.is_verified) {
+    if (user.isVerified) {
       throw new BadRequestException('Email is already verified');
     }
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    const { error: updateError } = await this.supabase
-      .client
-      .from('users')
-      .update({
-        verification_token: verificationToken,
-        verification_token_expires_at: tokenExpiry.toISOString()
-      })
-      .eq('id', user.id);
-
-    if (updateError) {
-      throw new InternalServerErrorException('Failed to update verification token');
-    }
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        verificationToken,
+        verificationTokenExpiresAt: tokenExpiry
+      }
+    });
 
     try {
       await this.mailService.sendVerificationEmail(user.email, verificationToken);
@@ -537,17 +463,13 @@ async register(registerDto: RegisterDto): Promise<User> {
   // Add terms acceptance method
   async acceptTerms(userId: string): Promise<{ message: string }> {
     try {
-      const { error } = await this.supabase.client
-        .from('users')
-        .update({ 
-          terms_accepted: true,
-          terms_accepted_at: new Date().toISOString()
-        })
-        .eq('id', userId);
-
-      if (error) {
-        throw new InternalServerErrorException('Failed to accept terms');
-      }
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { 
+          termsAccepted: true,
+          termsAcceptedAt: new Date()
+        }
+      });
 
       return { message: 'Terms and conditions accepted successfully' };
     } catch (error) {
@@ -557,21 +479,20 @@ async register(registerDto: RegisterDto): Promise<User> {
   }
 
   // Add terms status check method
-  async getTermsStatus(userId: string): Promise<{ terms_accepted: boolean; terms_accepted_at?: string }> {
+  async getTermsStatus(userId: string): Promise<{ terms_accepted: boolean; terms_accepted_at?: Date }> {
     try {
-      const { data: user, error } = await this.supabase.client
-        .from('users')
-        .select('terms_accepted, terms_accepted_at')
-        .eq('id', userId)
-        .single();
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { termsAccepted: true, termsAcceptedAt: true }
+      });
 
-      if (error || !user) {
+      if (!user) {
         throw new NotFoundException('User not found');
       }
 
       return {
-        terms_accepted: user.terms_accepted || false,
-        terms_accepted_at: user.terms_accepted_at
+        terms_accepted: user.termsAccepted || false,
+        terms_accepted_at: user.termsAcceptedAt || undefined
       };
     } catch (error) {
       console.error('Get terms status error:', error);
@@ -584,20 +505,19 @@ async changePassword(
   changePasswordDto: { currentPassword: string; newPassword: string }
 ): Promise<{ message: string }> {
   // Get the current user
-  const { data: user, error: userError } = await this.supabase.client
-    .from('users')
-    .select('id, password_hash')
-    .eq('id', userId)
-    .single();
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, passwordHash: true }
+  });
 
-  if (userError || !user) {
+  if (!user) {
     throw new NotFoundException('User not found');
   }
 
   // Verify current password
   const isCurrentPasswordValid = await bcrypt.compare(
     changePasswordDto.currentPassword, 
-    user.password_hash
+    user.passwordHash
   );
 
   if (!isCurrentPasswordValid) {
@@ -608,15 +528,10 @@ async changePassword(
   const hashedNewPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
 
   // Update password in database
-  const { error: updateError } = await this.supabase.client
-    .from('users')
-    .update({ password_hash: hashedNewPassword })
-    .eq('id', userId);
-
-  if (updateError) {
-    console.error('Password update error:', updateError);
-    throw new InternalServerErrorException('Failed to change password');
-  }
+  await this.prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash: hashedNewPassword }
+  });
 
   return { message: 'Password changed successfully' };
 }
@@ -628,13 +543,13 @@ async changePassword(
     const resetToken = crypto.randomBytes(32).toString('hex');
     const expiry = new Date(Date.now() + 3600000); // 1 hour
     
-    await this.supabase.client
-      .from('users')
-      .update({ 
-        password_reset_token: resetToken,
-        reset_token_expiry: expiry
-      })
-      .eq('id', user.id);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { 
+        passwordResetToken: resetToken,
+        resetTokenExpiry: expiry
+      }
+    });
     
     await this.mailService.sendPasswordResetEmail(email, resetToken);
   }
@@ -646,13 +561,13 @@ async changePassword(
     const resetToken = crypto.randomBytes(32).toString('hex');
     const expiry = new Date(Date.now() + 3600000); // 1 hour
     
-    await this.supabase.client
-      .from('users')
-      .update({ 
-        password_reset_token: resetToken,
-        reset_token_expiry: expiry
-      })
-      .eq('id', user.id);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { 
+        passwordResetToken: resetToken,
+        resetTokenExpiry: expiry
+      }
+    });
     
     await this.mailService.sendAdminPasswordResetEmail(email, resetToken);
   }
@@ -660,233 +575,161 @@ async changePassword(
 async resetPassword(dto: ResetPasswordDto) {
   const user = await this.findUserByResetToken(dto.token);
 
-  if (!user || user.reset_token_expiry < new Date()) {
+  const tokenExpiry = user?.resetTokenExpiry;
+  if (!user || !tokenExpiry || new Date(tokenExpiry) < new Date()) {
     throw new BadRequestException('Invalid or expired token');
   }
 
-  const hashedPassword = await bcrypt.hash(dto.newPassword, 10); // 10 is the salt rounds
+  const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
 
-  await this.supabase.client
-    .from('users')
-    .update({ 
-      password_hash: hashedPassword,
-      password_reset_token: null,
-      reset_token_expiry: null
-    })
-    .eq('id', user.id);
+  await this.prisma.user.update({
+    where: { id: user.id },
+    data: { 
+      passwordHash: hashedPassword,
+      passwordResetToken: null,
+      resetTokenExpiry: null
+    }
+  });
 
   return { message: 'Password has been reset successfully' };
 }
 
-  private async findUserByEmail(email: string): Promise<User | null> {
-    const { data, error } = await this.supabase
-      .client
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-    
-    return error ? null : data;
+  private async findUserByEmail(email: string): Promise<any | null> {
+    return await this.prisma.user.findUnique({
+      where: { email }
+    });
   }
 
-  private async findUserByResetToken(token: string): Promise<User | null> {
-    const { data, error } = await this.supabase
-      .client
-      .from('users')
-      .select('*')
-      .eq('password_reset_token', token)
-      .single();
-
-      console.log('Token received for verification:', token);
-    
-    return error ? null : data;
+  private async findUserByResetToken(token: string): Promise<any | null> {
+    return await this.prisma.user.findFirst({
+      where: { passwordResetToken: token }
+    });
   }
 
 // In your AuthService.getUserProfile method, add logging to debug:
 
-async getUserProfile(userId: string): Promise<UserDetails> {
-
-  const cacheKey = `user_profile:${userId}`;
-  const cachedProfile = await this.cacheManager.get<UserDetails>(cacheKey);
-  if (cachedProfile) {
-    console.log('Returning cached profile for user:', userId);
-    return cachedProfile;
-  }
-
-  // Step 1: Get user data
-  const { data: user, error: userError } = await this.supabase.client
-    .from('users')
-    .select('id, name, email, phone, gender, is_verified, role, school_id, terms_accepted, terms_accepted_at, onboarding_completed, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, emergency_contact_email')
-    .eq('id', userId)
-    .single();
-
-  if (userError || !user) {
-    console.error('User fetch error:', userError);
-    throw new NotFoundException('User profile not found');
-  }
-
-  // Step 2: Get school data if user has a school_id
-  let school: {
-    id: string;
-    name: string;
-    domain: string;
-    location: string;
-  } | undefined = undefined;
-  
-  if (user.school_id) {
-    const { data: schoolData, error: schoolError } = await this.supabase.client
-      .from('schools')
-      .select('id, name, domain, location')
-      .eq('id', user.school_id)
-      .single();
-
-    if (!schoolError && schoolData) {
-      school = {
-        id: schoolData.id,
-        name: schoolData.name,
-        domain: schoolData.domain,
-        location: schoolData.location,
-      };
+  async getUserProfile(userId: string): Promise<any> {
+    const cacheKey = `user_profile:${userId}`;
+    const cachedProfile = await this.cacheManager.get<any>(cacheKey);
+    if (cachedProfile) {
+      return cachedProfile;
     }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        gender: true,
+        isVerified: true,
+        role: true,
+        schoolId: true,
+        termsAccepted: true,
+        termsAcceptedAt: true,
+        onboardingCompleted: true,
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        emergencyContactRelationship: true,
+        emergencyContactEmail: true,
+        lastOnboardingStep: true
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException('User profile not found');
+    }
+
+    let school: any = undefined;
+    if (user.schoolId) {
+      school = await this.prisma.school.findUnique({
+        where: { id: user.schoolId },
+        select: { id: true, name: true, domain: true }
+      });
+    }
+
+    const profile = this.mapUserToResponse(user, school);
+
+    // Cache the profile for future requests
+    await this.cacheManager.set(cacheKey, profile, 300); // Cache for 5 minutes
+
+    return profile;
   }
 
-  // Step 3: Return combined profile
-  const profile: UserDetails = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    phone: user.phone,
-    gender: user.gender, // Make sure this is included
-    is_verified: user.is_verified,
-    terms_accepted: user.terms_accepted,
-    terms_accepted_at: user.terms_accepted_at,
-    role: user.role,
-    school_id: user.school_id,
-    school,
-    onboarding_completed: user.onboarding_completed,
-    emergency_contact_name: user.emergency_contact_name,
-    emergency_contact_phone: user.emergency_contact_phone,
-    emergency_contact_relationship: user.emergency_contact_relationship,
-    emergency_contact_email: user.emergency_contact_email,
-  };
+  private mapUserToResponse(user: any, school?: any): any {
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      gender: user.gender,
+      role: user.role,
+      is_verified: user.isVerified ?? user.is_verified,
+      terms_accepted: user.termsAccepted ?? user.terms_accepted,
+      terms_accepted_at: user.termsAcceptedAt ?? user.terms_accepted_at,
+      onboarding_completed: user.onboardingCompleted ?? user.onboarding_completed,
+      school_id: user.schoolId ?? user.school_id,
+      emergency_contact_name: user.emergencyContactName ?? user.emergency_contact_name,
+      emergency_contact_phone: user.emergencyContactPhone ?? user.emergency_contact_phone,
+      emergency_contact_relationship: user.emergencyContactRelationship ?? user.emergency_contact_relationship,
+      emergency_contact_email: user.emergencyContactEmail ?? user.emergency_contact_email,
+      last_onboarding_step: user.lastOnboardingStep ?? user.last_onboarding_step,
+      school: school ? {
+        id: school.id,
+        name: school.name,
+        domain: school.domain,
+      } : undefined,
+    };
+  }
 
-  // Cache the profile for future requests
-  await this.cacheManager.set(cacheKey, profile, 300); // Cache for 5 minutes
-
-  console.log('Final profile gender:', profile.gender); // Add this debug line
-
-  return profile;
-}
-
-async updateProfile(userId: string, updateProfileDto: UpdateProfileDto): Promise<UserDetails> {
+async updateProfile(userId: string, updateProfileDto: UpdateProfileDto): Promise<any> {
   // Get current user data first
-  const { data: currentUser, error: fetchError } = await this.supabase.client
-    .from('users')
-    .select('*')
-    .eq('id', userId)
-    .single();
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId }
+  });
 
-  if (fetchError || !currentUser) {
+  if (!currentUser) {
     throw new NotFoundException('User not found');
   }
 
-  // Prepare update data (include ALL updatable fields)
+  // Prepare update data
   const updateData: any = {};
   
-  // Personal info fields
   if (updateProfileDto.name !== undefined) updateData.name = updateProfileDto.name;
   if (updateProfileDto.phone !== undefined) updateData.phone = updateProfileDto.phone;
   if (updateProfileDto.gender !== undefined) updateData.gender = updateProfileDto.gender;
   
-  // Emergency contact fields
   if (updateProfileDto.emergency_contact_name !== undefined) {
-    updateData.emergency_contact_name = updateProfileDto.emergency_contact_name;
+    updateData.emergencyContactName = updateProfileDto.emergency_contact_name;
   }
   if (updateProfileDto.emergency_contact_phone !== undefined) {
-    updateData.emergency_contact_phone = updateProfileDto.emergency_contact_phone;
+    updateData.emergencyContactPhone = updateProfileDto.emergency_contact_phone;
   }
   if (updateProfileDto.emergency_contact_relationship !== undefined) {
-    updateData.emergency_contact_relationship = updateProfileDto.emergency_contact_relationship;
+    updateData.emergencyContactRelationship = updateProfileDto.emergency_contact_relationship;
   }
   if (updateProfileDto.emergency_contact_email !== undefined) {
-    updateData.emergency_contact_email = updateProfileDto.emergency_contact_email || null;
+    updateData.emergencyContactEmail = updateProfileDto.emergency_contact_email || null;
   }
   
-  // Terms fields
   if (updateProfileDto.terms_accepted !== undefined) {
-    updateData.terms_accepted = updateProfileDto.terms_accepted;
+    updateData.termsAccepted = updateProfileDto.terms_accepted;
   }
   if (updateProfileDto.terms_accepted_at !== undefined) {
-    updateData.terms_accepted_at = updateProfileDto.terms_accepted_at;
+    updateData.termsAcceptedAt = updateProfileDto.terms_accepted_at;
   }
 
-  // Only update if there's something to update
   if (Object.keys(updateData).length === 0) {
     throw new BadRequestException('No valid fields to update');
   }
 
-  console.log('Updating user with data:', updateData);
-
   // Update user profile
-  const { data: updatedUser, error: updateError } = await this.supabase.client
-    .from('users')
-    .update(updateData)
-    .eq('id', userId)
-    .select('id, name, email, phone, gender, is_verified, role, school_id, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, emergency_contact_email, terms_accepted, terms_accepted_at, onboarding_completed')
-    .single();
+  await this.prisma.user.update({
+    where: { id: userId },
+    data: updateData
+  });
 
-  if (updateError) {
-    console.error('Profile update error:', updateError);
-    throw new InternalServerErrorException('Failed to update profile');
-  }
-
-  // Get school data if user has a school_id
-  let school: {
-    id: string;
-    name: string;
-    domain: string;
-    location: string;
-  } | undefined = undefined;
-
-  if (updatedUser.school_id) {
-    const { data: schoolData, error: schoolError } = await this.supabase.client
-      .from('schools')
-      .select('id, name, domain, location')
-      .eq('id', updatedUser.school_id)
-      .single();
-
-    if (!schoolError && schoolData) {
-      school = {
-        id: schoolData.id,
-        name: schoolData.name,
-        domain: schoolData.domain,
-        location: schoolData.location,
-      };
-    }
-  }
-
-  // Return updated profile with all fields
-  const profile: UserDetails = {
-    id: updatedUser.id,
-    name: updatedUser.name,
-    email: updatedUser.email,
-    phone: updatedUser.phone,
-    gender: updatedUser.gender,
-    is_verified: updatedUser.is_verified,
-    role: updatedUser.role,
-    school_id: updatedUser.school_id,
-    terms_accepted: updatedUser.terms_accepted,
-    terms_accepted_at: updatedUser.terms_accepted_at,
-    onboarding_completed: updatedUser.onboarding_completed,
-    emergency_contact_name: updatedUser.emergency_contact_name,
-    emergency_contact_phone: updatedUser.emergency_contact_phone,
-    emergency_contact_relationship: updatedUser.emergency_contact_relationship,
-    emergency_contact_email: updatedUser.emergency_contact_email,
-    school,
-  };
-
-  console.log('Profile updated successfully:', profile.id);
-
-  return profile;
+  return this.getUserProfile(userId);
 }
 }

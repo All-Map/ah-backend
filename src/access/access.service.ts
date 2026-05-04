@@ -1,15 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Access } from 'src/entities/access.entity';
+import { Access } from '@prisma/client';
+import { PrismaService } from 'src/prisma/prisma.service';
 import { PreviewUsageService } from 'src/preview/preview-usage.service';
 
 @Injectable()
 export class AccessService {
   constructor(
-    @InjectRepository(Access)
-    private accessRepository: Repository<Access>,
-    private previewUsageService: PreviewUsageService, // Inject the preview service
+    private readonly prisma: PrismaService,
+    private previewUsageService: PreviewUsageService,
   ) {}
 
   async createAccessRecord(data: {
@@ -17,74 +15,71 @@ export class AccessService {
     expiresAt: Date;
     source: string;
     paystackReference?: string;
-  }) {
-    // Check if record with this reference already exists
+  }): Promise<Access> {
     if (data.paystackReference) {
-      const existing = await this.accessRepository.findOne({
-        where: { paystackReference: data.paystackReference }
+      const existing = await this.prisma.access.findFirst({
+        where: { paystackReference: data.paystackReference },
       });
-      
+
       if (existing) {
-        // Update existing record instead of creating new one
-        existing.userId = data.userId;
-        existing.expiresAt = data.expiresAt;
-        existing.source = data.source;
-        return this.accessRepository.save(existing);
+        return this.prisma.access.update({
+          where: { id: existing.id },
+          data: {
+            userId: data.userId,
+            expiresAt: data.expiresAt,
+            source: data.source,
+          },
+        });
       }
     }
-    
-    const accessRecord = this.accessRepository.create(data);
-    return this.accessRepository.save(accessRecord);
+
+    return this.prisma.access.create({
+      data: {
+        userId: data.userId,
+        expiresAt: data.expiresAt,
+        source: data.source,
+        paystackReference: data.paystackReference,
+      },
+    });
   }
 
   async getUserActiveAccess(userId: string): Promise<Access | null> {
     const now = new Date();
-    
-    return this.accessRepository.findOne({
+    return this.prisma.access.findFirst({
       where: {
         userId,
-        expiresAt: new Date(now),
-      } as any,
+        expiresAt: { gt: now },
+      },
+      orderBy: { expiresAt: 'desc' },
     });
   }
 
   async checkAccess(userId: string): Promise<{ active: boolean; expiry?: Date; previewUsed?: boolean }> {
-    console.log(`Checking access for user: ${userId}`);
-    
     const now = new Date();
-    console.log(`Current time: ${now}`);
-    
-    // Try to find any access record for this user
-    const access = await this.accessRepository.findOne({
+
+    const access = await this.prisma.access.findFirst({
       where: { userId },
-      order: { expiresAt: 'DESC' } // Get the most recent
+      orderBy: { expiresAt: 'desc' },
     });
-    
-    console.log(`Found access record:`, access);
-    
+
     if (access) {
       const expiresAt = new Date(access.expiresAt);
       const isActive = expiresAt > now;
-      
-      console.log(`Access expires at: ${expiresAt}`);
-      console.log(`Is active: ${isActive}`);
-      
+
       if (isActive) {
-        return { 
-          active: true, 
+        return {
+          active: true,
           expiry: expiresAt,
-          previewUsed: false 
+          previewUsed: false,
         };
       }
     }
-    
-    // Check if preview was used
+
     const previewUsed = await this.previewUsageService.hasUserUsedPreview(userId);
-    console.log(`No active access found for user ${userId}, preview used: ${previewUsed}`);
-    
-    return { 
+
+    return {
       active: false,
-      previewUsed 
+      previewUsed,
     };
   }
 
@@ -96,7 +91,7 @@ export class AccessService {
   async grantAccess(userId: string, days: number = 30, paystackReference?: string): Promise<Access> {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + days);
-    
+
     return this.createAccessRecord({
       userId,
       expiresAt,
@@ -106,8 +101,8 @@ export class AccessService {
   }
 
   async getAccessByPaystackReference(paystackReference: string): Promise<Access | null> {
-    return this.accessRepository.findOne({
-      where: { paystackReference }
+    return this.prisma.access.findUnique({
+      where: { paystackReference },
     });
   }
 }

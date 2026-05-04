@@ -16,7 +16,7 @@ This documentation suite provides comprehensive coverage of the AH-Backend hoste
 - **Architecture Overview**: System diagrams, layered architecture, component relationships
 - **Technology Stack**: Detailed dependencies table with versions and purposes
 - **Project Structure**: Complete directory tree with descriptions
-- **Database Schema**: Entity Relationship Diagram (ERD), 15 entities fully documented
+- **Database Schema**: Entity Relationship Diagram (ERD), 15 models fully documented
 - **Core Modules**: 9 modules with services, DTOs, and business logic
 - **API Architecture**: 50+ endpoints with response formats, error codes
 - **Authentication**: JWT flow, RBAC, password security details
@@ -37,7 +37,7 @@ This documentation suite provides comprehensive coverage of the AH-Backend hoste
 
 - **Project At-a-Glance**: Key metrics and framework info
 - **Core Features Summary**: 7 feature categories with overviews
-- **Database Entities**: 15 entities in summary table
+- **Database Models**: 15 models in summary table
 - **API Endpoint Categories**: All 50+ endpoints organized by resource
 - **Key Services Architecture**: Service dependencies diagram
 - **Environment Variables**: Required and optional variables reference
@@ -142,7 +142,7 @@ This documentation suite provides comprehensive coverage of the AH-Backend hoste
 **Understanding database design**
 
 - [TECHNICAL_ARCHITECTURE.md - Database Schema](TECHNICAL_ARCHITECTURE.md#database-schema--entities)
-- [TECHNICAL_ARCHITECTURE.md - Entity Descriptions](TECHNICAL_ARCHITECTURE.md#core-entities-description)
+- [TECHNICAL_ARCHITECTURE.md - Model Descriptions](TECHNICAL_ARCHITECTURE.md#core-models-description)
 
 **Deploying to production**
 
@@ -197,7 +197,7 @@ This documentation suite provides comprehensive coverage of the AH-Backend hoste
 ### Technology Stack
 
 - ✅ Framework & runtime (NestJS, TypeScript, Node.js)
-- ✅ Database & ORM (PostgreSQL, TypeORM)
+- ✅ Database & ORM (PostgreSQL, Prisma)
 - ✅ Authentication (JWT, Passport, bcrypt)
 - ✅ File storage (Cloudinary)
 - ✅ Email service (Resend)
@@ -207,7 +207,7 @@ This documentation suite provides comprehensive coverage of the AH-Backend hoste
 
 ### Database Entities
 
-- ✅ 15 entities fully documented
+- ✅ 15 models fully documented
 - ✅ Relationships mapped
 - ✅ Enums and statuses defined
 - ✅ Constraints and indexes specified
@@ -279,7 +279,7 @@ This documentation suite provides comprehensive coverage of the AH-Backend hoste
 | Payments            | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md#5-payment-module-payment)     | 80+   |
 | Reviews             | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md#6-review-module-review)       | 70+   |
 | Admin               | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md#7-admin-module-admin)         | 50+   |
-| Feedback            | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md#8-feedback-module-feeedback)  | 30+   |
+| Feedback            | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md#8-feedback-module-feedback)  | 30+   |
 | Supporting Services | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md#9-supporting-services)        | 80+   |
 
 ---
@@ -361,7 +361,7 @@ This documentation suite provides comprehensive coverage of the AH-Backend hoste
 | Item                | Version          |
 | ------------------- | ---------------- |
 | Documentation Suite | 1.0              |
-| Last Updated        | January 27, 2026 |
+| Last Updated        | April 2026       |
 | NestJS              | 11.1.5           |
 | TypeScript          | 5.7.3            |
 | Node.js             | 18+              |
@@ -415,7 +415,7 @@ All documentation follows these standards:
 ## 🎯 Completeness Verification
 
 ✅ **Project Structure**: 100% documented  
-✅ **Database Schema**: 100% documented (15 entities)  
+✅ **Database Schema**: 100% documented (15 models)  
 ✅ **API Endpoints**: 100% documented (50+ endpoints)  
 ✅ **Modules**: 100% documented (9 modules)  
 ✅ **Services**: 100% documented (20+ services)  
@@ -464,6 +464,6 @@ For documentation updates, issues, or clarifications:
 
 ---
 
-_Last Updated: January 27, 2026_  
+_Last Updated: April 2026_  
 _Version: 1.0_  
 _Status: Complete_

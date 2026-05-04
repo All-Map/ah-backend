@@ -1,40 +1,48 @@
-import { Controller, Get, Query } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import { Controller, Get, Param, Query, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('schools')
 export class SchoolController {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   @Get()
   async getSchools(@Query('search') search?: string) {
-    let query = this.supabase.client
-      .from('schools')
-      .select('id, name, domain, location')
-      .order('name', { ascending: true });
-
+    const where: any = {};
+    
     if (search) {
-      query = query.or(`name.ilike.%${search}%,location.ilike.%${search}%`);
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        // location is a geometry type and not directly searchable via 'contains' in standard Prisma strings
+      ];
     }
 
-    const { data: schools, error } = await query;
-
-    if (error) {
-      throw new Error(`Failed to fetch schools: ${error.message}`);
-    }
-
-    return schools;
+    return await this.prisma.school.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        domain: true,
+        // location is omitted as it is an unsupported geography type
+      },
+      orderBy: {
+        name: 'asc'
+      }
+    });
   }
 
   @Get(':id')
-  async getSchool(@Query('id') id: string) {
-    const { data: school, error } = await this.supabase.client
-      .from('schools')
-      .select('*')
-      .eq('id', id)
-      .single();
+  async getSchool(@Param('id') id: string) {
+    const school = await this.prisma.school.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        domain: true
+      }
+    });
 
-    if (error || !school) {
-      throw new Error('School not found');
+    if (!school) {
+      throw new NotFoundException('School not found');
     }
 
     return school;

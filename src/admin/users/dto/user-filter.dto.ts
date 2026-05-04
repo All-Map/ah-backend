@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsOptional, IsString, IsBoolean, IsEnum, IsNumber } from 'class-validator';
-import { UserRole } from '../../../entities/user.entity';
+import { UserRole } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class UserFilterDto {

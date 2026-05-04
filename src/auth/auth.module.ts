@@ -1,24 +1,22 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { SupabaseModule } from '../supabase/supabase.module';
+import { PrismaModule } from '../prisma/prisma.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { User } from 'src/entities/user.entity';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { MailModule } from 'src/mail/mail.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { AdminVerification } from 'src/entities/admin-verification.entity';
 import { AdminVerificationService } from './admin-verification.service';
 import { AdminController } from './admin.controller';
 import { FileUploadService } from 'src/file/file-upload.service';
 import { ProfileModule } from 'src/profile/profile.module';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
+import { UserManagementModule } from 'src/admin/users/user-management.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, AdminVerification]),
     PassportModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.registerAsync({
@@ -29,17 +27,19 @@ import { ProfileModule } from 'src/profile/profile.module';
         signOptions: { expiresIn: '7d' },
       }),
     }),
-    SupabaseModule,
+    PrismaModule,
     MailModule,
-    ProfileModule
+    ProfileModule,
+    UserManagementModule,
   ],
   controllers: [AuthController, AdminController],
   providers: [
     AuthService,
     JwtStrategy,
     GoogleStrategy,
-    AdminVerificationService, // <-- move here
+    AdminVerificationService,
     FileUploadService,
+    CloudinaryService,
   ],
   exports: [AuthService],
 })

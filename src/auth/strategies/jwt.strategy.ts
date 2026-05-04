@@ -1,27 +1,28 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { SupabaseService } from '../../supabase/supabase.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private readonly supabaseService: SupabaseService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.SUPABASE_JWT_SECRET,
+      secretOrKey: configService.get<string>('JWT_SECRET'),
     });
   }
 
   async validate(payload: any) {
-    const { data: user, error } = await this.supabaseService
-      .client
-      .from('users')
-      .select('*')
-      .eq('id', payload.sub)
-      .single();
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
 
-    if (error) throw new UnauthorizedException();
+    if (!user) throw new UnauthorizedException();
     return user;
   }
 }

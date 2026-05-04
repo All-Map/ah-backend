@@ -27,7 +27,7 @@ import {
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
-import { UserRole } from '../../entities/user.entity';
+import { UserRole } from '@prisma/client';
 import { UserManagementService } from './user-management.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -41,7 +41,7 @@ export class UserManagementController {
   constructor(private readonly userService: UserManagementService) {}
 
   @Get()
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get all users with filtering and pagination' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -54,7 +54,7 @@ export class UserManagementController {
   }
 
   @Get('stats')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get user statistics' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -65,14 +65,14 @@ export class UserManagementController {
   }
 
   @Get('export')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Export users to CSV' })
   async exportUsers(@Query() filterDto: UserFilterDto) {
     return await this.userService.exportUsers(filterDto);
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get user by ID' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -92,7 +92,7 @@ export class UserManagementController {
   }
 
   @Post()
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Create a new user' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -104,7 +104,7 @@ export class UserManagementController {
   }
 
   @Put(':id')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Update user details' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -120,7 +120,7 @@ export class UserManagementController {
   }
 
   @Patch(':id/status')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Update user status' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -135,7 +135,7 @@ export class UserManagementController {
   }
 
   @Patch(':id/verify')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Verify a user' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -147,7 +147,7 @@ export class UserManagementController {
   }
 
   @Patch(':id/role')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Update user role' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -162,7 +162,7 @@ export class UserManagementController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Delete a user' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -178,7 +178,7 @@ export class UserManagementController {
   }
 
   @Post(':id/send-verification')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Send verification email to user' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -190,7 +190,7 @@ export class UserManagementController {
   }
 
   @Post('bulk-verify')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Bulk verify users' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -201,7 +201,7 @@ export class UserManagementController {
   }
 
   @Post('bulk-delete')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Bulk delete users' })
   @ApiResponse({
     status: HttpStatus.OK,

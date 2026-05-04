@@ -1,7 +1,7 @@
 # AH-Backend: Technical Architecture & Comprehensive Documentation
 
 **Version:** 0.0.1  
-**Last Updated:** January 27, 2026  
+**Last Updated:** April 2026  
 **Project Type:** NestJS Backend - Hostel Management Platform  
 **Language:** TypeScript  
 **Database:** PostgreSQL (via Supabase)  
@@ -92,7 +92,7 @@
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              PostgreSQL Database (Supabase)                      │
-│         (TypeORM - Auto-loaded Entity Synchronization)          │
+│                (Prisma - Type-safe Client)                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -102,7 +102,7 @@ The application follows a **layered architecture** pattern:
 
 1. **Presentation Layer**: Controllers (REST API endpoints)
 2. **Business Logic Layer**: Services (business rules and workflows)
-3. **Data Access Layer**: Repositories (TypeORM entities and queries)
+3. **Data Access Layer**: Prisma Client (Models and type-safe queries)
 4. **Infrastructure Layer**: External services (Paystack, Cloudinary, Resend)
 5. **Cross-Cutting Concerns**: Guards, Interceptors, Middleware
 
@@ -120,12 +120,11 @@ The application follows a **layered architecture** pattern:
 
 ### Database & ORM
 
-| Component                     | Version | Purpose                         |
-| ----------------------------- | ------- | ------------------------------- |
-| **TypeORM**                   | 0.3.25  | ORM for database interaction    |
-| **PostgreSQL** (via Supabase) | 15+     | Primary relational database     |
-| **Prisma**                    | 6.12.0  | Alternative ORM (complementary) |
-| **pg**                        | 8.16.3  | PostgreSQL driver               |
+| Component                     | Version | Purpose                      |
+| ----------------------------- | ------- | ---------------------------- |
+| **Prisma**                    | 6.12.0  | Primary ORM & Schema Manager |
+| **PostgreSQL** (via Supabase) | 15+     | Primary relational database  |
+| **pg**                        | 8.16.3  | PostgreSQL driver            |
 
 ### Authentication & Security
 
@@ -213,150 +212,40 @@ ah-backend/
 │   ├── app.service.ts                # Root service
 │   ├── instrument.ts                 # Sentry instrumentation
 │   │
-│   ├── config/                       # Configuration files
-│   │   └── typeorm.config.ts         # TypeORM database configuration
+│   ├── prisma/                       # Prisma database client & service
+│   │   ├── prisma.module.ts
+│   │   └── prisma.service.ts
 │   │
-│   ├── entities/                     # Database entities (TypeORM)
-│   │   ├── user.entity.ts            # User model (15 columns, relationships)
-│   │   ├── hostel.entity.ts          # Hostel model (with amenities, payments)
-│   │   ├── room.entity.ts            # Room model
-│   │   ├── room-type.entity.ts       # Room type (capacity, pricing)
-│   │   ├── booking.entity.ts         # Booking model (complex statuses)
-│   │   ├── payment.entity.ts         # Payment transactions
-│   │   ├── review.entity.ts          # Student reviews with ratings
-│   │   ├── feedback.entity.ts        # User feedback
-│   │   ├── public-feedback.entity.ts # Public feedback
-│   │   ├── school.entity.ts          # School/institution data
-│   │   ├── deposit.entity.ts         # Deposit tracking
-│   │   ├── verification.entity.ts    # Email verification tokens
-│   │   ├── admin-verification.entity.ts # Admin verification workflow
-│   │   ├── access.entity.ts          # Access control and previews
-│   │   └── preview-usage.entity.ts   # Preview usage tracking
-│   │
-│   ├── auth/                         # Authentication module
-│   │   ├── auth.module.ts
-│   │   ├── auth.service.ts           # Authentication logic
-│   │   ├── auth.controller.ts        # Authentication endpoints
-│   │   ├── admin.controller.ts       # Admin auth endpoints
-│   │   ├── admin-verification.service.ts
-│   │   ├── supabase.strategy.ts      # Supabase passport strategy
-│   │   ├── decorators/               # Custom decorators
-│   │   │   ├── roles.decorator.ts
-│   │   │   └── current-user.decorator.ts
-│   │   ├── dto/                      # Data Transfer Objects
-│   │   │   ├── login.dto.ts
-│   │   │   ├── register.dto.ts
-│   │   │   ├── reset-password.dto.ts
-│   │   │   └── update-profile.dto.ts
-│   │   ├── files/                    # Auth file uploads
-│   │   ├── guards/                   # Route guards
-│   │   │   ├── jwt-auth.guard.ts
-│   │   │   └── roles.guard.ts
-│   │   └── strategies/               # Passport strategies
-│   │
-│   ├── hostels/                      # Hostels management module
-│   │   ├── hostels.module.ts
-│   │   ├── hostels.service.ts        # Hostel business logic
-│   │   ├── hostels.controller.ts     # Hostel endpoints
-│   │   └── dto/
-│   │       ├── create-hostel.dto.ts
-│   │       └── update-hostel.dto.ts
-│   │
-│   ├── rooms/                        # Rooms management module
-│   │   ├── rooms.module.ts
-│   │   ├── rooms.service.ts
-│   │   ├── rooms.controller.ts
-│   │   ├── room-type.service.ts
-│   │   └── dto/
-│   │       ├── create-room.dto.ts
-│   │       └── update-room.dto.ts
-│   │
-│   ├── bookings/                     # Bookings module
-│   │   ├── booking.module.ts
-│   │   ├── bookings.service.ts       # Complex booking logic
-│   │   ├── bookings.controller.ts
-│   │   ├── booking-scheduler.service.ts # Scheduled tasks
-│   │   ├── notifications.service.ts  # Booking notifications
-│   │   └── dto/
-│   │       └── booking.dto.ts        # Multiple DTOs for booking flows
-│   │
-│   ├── payment/                      # Payment management module
-│   │   ├── payments.module.ts
-│   │   ├── payments.service.ts
-│   │   ├── payments.controller.ts
-│   │   └── dto/
-│   │       └── payment.dto.ts
-│   │
-│   ├── paystack/                     # Paystack integration service
-│   │   └── paystack.service.ts
-│   │
-│   ├── review/                       # Reviews module
-│   │   ├── review.module.ts
-│   │   ├── review.service.ts
-│   │   ├── review.controller.ts
-│   │   └── dto/
-│   │
-│   ├── feeedback/                    # Feedback module
-│   │   ├── feedback.module.ts
-│   │   ├── feedback.service.ts
-│   │   ├── feedback.controller.ts
-│   │   ├── public-feedback.service.ts
-│   │   ├── feedbacksql.txt           # SQL migration/queries
-│   │   └── dto/
-│   │
-│   ├── school/                       # Schools module
-│   │   ├── school.module.ts
-│   │   └── school.controller.ts
-│   │
-│   ├── admin/                        # Admin operations module
-│   │   ├── admin.module.ts
-│   │   ├── admin.service.ts
-│   │   ├── admin.controller.ts
-│   │   ├── access/                   # Admin access management
-│   │   │   └── access-management.module.ts
-│   │   ├── bookings/                 # Admin booking management
-│   │   │   └── booking-management.module.ts
-│   │   ├── users/                    # Admin user management
-│   │   │   └── user-management.module.ts
-│   │   └── dto/
-│   │
-│   ├── deposits/                     # Deposits module
-│   │   ├── deposits.module.ts
-│   │   ├── deposits.service.ts
-│   │   ├── deposits.controller.ts
-│   │   └── dto/
-│   │
-│   ├── access/                       # Access control service
-│   │   └── access.service.ts
-│   │
-│   ├── cloudinary/                   # Media management service
-│   │   └── cloudinary.service.ts
-│   │
-│   ├── mail/                         # Email service module
-│   │   ├── mail.module.ts
-│   │   ├── mail.service.ts
-│   │   └── templates/                # Email templates
-│   │       ├── verify.html
-│   │       └── reset.html
-│   │
-│   ├── file/                         # File handling service
-│   │   └── file-upload.service.ts
-│   │
-│   ├── supabase/                     # Supabase integration
-│   │   ├── supabase.module.ts
-│   │   └── supabase.service.ts
-│   │
-│   ├── profile/                      # User profile module
-│   │   ├── profile.module.ts
-│   │   └── profile.service.ts
-│   │
-│   ├── preview/                      # Preview/trial features
-│   │   ├── preview-usage.module.ts
-│   │   └── preview-usage.service.ts
-│   │
-│   └── obboarding/                   # Onboarding module
-│       └── dto/
-│           └── onboarding.dto.ts
+│   ├── auth/                         # Authentication module (JWT, Passport)
+│   ├── hostels/                      # Hostels management (postgis support)
+│   ├── rooms/                        # Rooms and room-types
+│   ├── bookings/                     # Booking lifecycle management
+│   ├── payment/                      # Payment tracking
+│   ├── paystack/                     # Paystack API integration
+│   ├── review/                       # Student review & moderation
+│   ├── feedback/                     # Platform feedback (fixed typo)
+│   ├── school/                       # Educational institutions
+│   ├── admin/                        # Admin dashboard operations
+│   ├── deposits/                     # Booking deposits
+│   ├── access/                       # Access control management
+│   ├── cloudinary/                   # Media uploads
+│   ├── mail/                         # Resend email templates
+│   ├── file/                         # Generic file uploads
+│   ├── supabase/                     # Supabase JS integration
+│   ├── profile/                      # User profiles
+│   ├── preview/                      # Preview usage tracking
+│   └── onboarding/                   # Onboarding workflows (fixed typo)
+│
+├── prisma/                           # Prisma schema and migrations
+│   ├── schema.prisma                 # Master database schema
+│   └── migrations/                   # SQL migration history
+│
+├── test/                             # End-to-end and unit tests
+├── configuration files
+│   ├── package.json
+│   ├── nest-cli.json
+│   └── .env
+```
 │
 ├── test/                             # End-to-end tests
 │   ├── app.e2e-spec.ts
@@ -377,9 +266,9 @@ ah-backend/
 
 ---
 
-## Database Schema & Entities
+## Database Schema & Models
 
-### Entity Relationship Diagram (ERD)
+### Model Relationship Diagram (ERD)
 
 ```
 ┌──────────────────────────┐
@@ -538,9 +427,9 @@ ah-backend/
 └──────────────────────────────┘
 ```
 
-### Core Entities Description
+### Core Models Description
 
-#### **User Entity**
+#### **User Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -573,7 +462,7 @@ ah-backend/
 
 ---
 
-#### **Hostel Entity**
+#### **Hostel Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -618,7 +507,7 @@ ah-backend/
 
 ---
 
-#### **Booking Entity**
+#### **Booking Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -657,7 +546,7 @@ ah-backend/
 
 ---
 
-#### **Payment Entity**
+#### **Payment Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -675,7 +564,7 @@ ah-backend/
 
 ---
 
-#### **Review Entity**
+#### **Review Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -711,7 +600,7 @@ ah-backend/
 
 ---
 
-#### **Room Entity**
+#### **Room Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -734,7 +623,7 @@ ah-backend/
 
 ---
 
-#### **RoomType Entity**
+#### **RoomType Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -750,7 +639,7 @@ ah-backend/
 
 ---
 
-#### **Access Entity** (Preview/Trial Management)
+#### **Access Model** (Preview/Trial Management)
 
 ```typescript
 - id: UUID (Primary Key)
@@ -765,7 +654,7 @@ ah-backend/
 
 ---
 
-#### **School Entity**
+#### **School Model**
 
 ```typescript
 - id: UUID (Primary Key)
@@ -777,25 +666,25 @@ ah-backend/
 
 ---
 
-#### **Other Entities**
+#### **Other Models**
 
-**Deposit Entity:**
+**Deposit Model:**
 
 - Tracks security deposits for bookings
 - Status: [pending, held, refunded, deducted]
 
-**Verification Entity:**
+**Verification Model:**
 
 - Email verification tokens
 - Password reset tokens
 - Time-based expiry
 
-**AdminVerification Entity:**
+**AdminVerification Model:**
 
 - Admin account verification workflow
 - Many-to-Many with Users
 
-**Feedback Entity:**
+**Feedback Model:**
 
 - General platform feedback
 - Public review feedback
@@ -1114,7 +1003,7 @@ pending → confirmed → checked_in → checked_out
 
 ---
 
-### 8. Feedback Module (`feeedback/`)
+### 8. Feedback Module (`feedback/`)
 
 **Purpose:** Collect and manage user feedback on platform.
 
@@ -1154,7 +1043,7 @@ pending → confirmed → checked_in → checked_out
 #### **SupabaseService** (`supabase/supabase.service.ts`)
 
 - Supabase SDK client initialization
-- Alternative to direct database access (TypeORM-based approach preferred)
+- Alternative to direct database access (Prisma-based approach preferred)
 - Used for special authentication flows
 
 #### **FileUploadService** (`file/file-upload.service.ts`)
@@ -1732,7 +1621,7 @@ SUPABASE_SERVICE_ROLE_KEY=xxxxx
 
 **Database Connection**:
 
-- TypeORM connects via SUPABASE_DB_URL
+- Prisma connects via DATABASE_URL
 - Auto-loads entities (synchronize: false - migrations manual)
 - PostGIS extension enabled for geospatial queries
 
@@ -1864,7 +1753,7 @@ cp .env.example .env
 SUPABASE_DB_URL=postgresql://localhost/ah_backend
 
 # Run database migrations (if applicable)
-npm run typeorm migration:run
+npx prisma migrate dev
 
 # Start development server
 npm run start:dev
@@ -2110,7 +1999,7 @@ export class ValidationException extends HttpException {}
 - ✅ Helmet middleware for HTTP headers
 - ✅ Rate limiting (100 requests/60 seconds)
 - ✅ Input validation with class-validator
-- ✅ SQL injection prevention (TypeORM parameterized queries)
+- ✅ SQL injection prevention (Prisma parameterized queries)
 - ✅ XSS protection (output encoding)
 
 ### Sensitive Data
@@ -2151,8 +2040,8 @@ Recommended fields to log:
   "@nestjs/common": "11.1.5",
   "@nestjs/core": "11.1.5",
   "@nestjs/jwt": "11.0.0",
-  "@nestjs/typeorm": "11.0.0",
-  "typeorm": "0.3.25",
+  "@prisma/client": "6.12.0",
+  "prisma": "6.12.0",
   "bcrypt": "6.0.0",
   "class-validator": "0.14.2",
   "cloudinary": "2.7.0",
@@ -2172,7 +2061,7 @@ Recommended fields to log:
 ### Documentation References
 
 - [NestJS Docs](https://docs.nestjs.com)
-- [TypeORM Docs](https://typeorm.io)
+- [Prisma Docs](https://www.prisma.io/docs)
 - [Passport.js](https://www.passportjs.org)
 - [Swagger/OpenAPI](https://swagger.io)
 - [Paystack API](https://paystack.com/docs)

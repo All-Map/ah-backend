@@ -23,9 +23,9 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from '../entities/user.entity';
+import { UserRole, ReviewStatus } from '@prisma/client';
+import type { Review } from '@prisma/client';
 import { ReviewsService, CreateReviewDto, UpdateReviewDto, ReviewFilterDto, HostelResponseDto, ModerateReviewDto } from './review.service';
-import { Review, ReviewStatus } from '../entities/review.entity';
 import { File as MulterFile } from 'multer';
 
 @Controller('reviews')
@@ -38,7 +38,6 @@ export class ReviewsController {
   @ApiResponse({ 
     status: HttpStatus.CREATED, 
     description: 'Review created successfully',
-    type: Review 
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -88,7 +87,6 @@ export class ReviewsController {
 // @ApiResponse({ 
 //   status: HttpStatus.OK, 
 //   description: 'Booking review retrieved successfully',
-//   type: Review 
 // })
 // @ApiResponse({ 
 //   status: HttpStatus.NOT_FOUND, 
@@ -113,7 +111,6 @@ export class ReviewsController {
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Recent reviews retrieved successfully',
-    type: [Review] 
   })
   async getRecentReviews(@Query('limit') limit?: number): Promise<Review[]> {
     return this.reviewsService.getRecentReviews(limit);
@@ -151,7 +148,7 @@ export class ReviewsController {
     @Request() req: any,
   ) {
     // Students can only get their own eligible bookings
-    if (req.user.role !== UserRole.SUPER_ADMIN && req.user.id !== studentId) {
+    if (req.user.role !== UserRole.super_admin && req.user.id !== studentId) {
       throw new ForbiddenException('You can only view your own eligible bookings');
     }
 
@@ -173,7 +170,7 @@ export class ReviewsController {
     @Request() req: any,
   ): Promise<{ canReview: boolean }> {
     // Students can only check their own bookings
-    if (req.user.role !== UserRole.SUPER_ADMIN && req.user.id !== studentId) {
+    if (req.user.role !== UserRole.super_admin && req.user.id !== studentId) {
       throw new ForbiddenException('You can only check your own bookings');
     }
 
@@ -214,14 +211,13 @@ async getHostelReviews(
   // Add this method to your ReviewsController class
 
   @Post(':id/moderate')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Moderate a review (admin only)' })
   @ApiParam({ name: 'id', description: 'Review ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Review moderated successfully',
-    type: Review 
   })
   @ApiResponse({ 
     status: HttpStatus.FORBIDDEN, 
@@ -257,7 +253,7 @@ async getHostelReviews(
     @Request() req: any,
   ) {
     // Students can only view their own reviews, admins can view any
-    if (req.user.role !== UserRole.SUPER_ADMIN && req.user.id !== studentId) {
+    if (req.user.role !== UserRole.super_admin && req.user.id !== studentId) {
       throw new ForbiddenException('You can only view your own reviews');
     }
 
@@ -270,7 +266,6 @@ async getHostelReviews(
 //   @ApiResponse({ 
 //     status: HttpStatus.OK, 
 //     description: 'Booking review retrieved successfully',
-//     type: Review 
 //   })
 //   @ApiResponse({ 
 //     status: HttpStatus.NOT_FOUND, 
@@ -286,7 +281,6 @@ async getHostelReviews(
 @ApiResponse({ 
   status: HttpStatus.OK, 
   description: 'Booking review retrieved successfully',
-  type: Review 
 })
 @ApiResponse({ 
   status: HttpStatus.NOT_FOUND, 
@@ -310,7 +304,6 @@ async getBookingReview(@Param('bookingId', ParseUUIDPipe) bookingId: string): Pr
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Review retrieved successfully',
-    type: Review 
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -326,7 +319,6 @@ async getBookingReview(@Param('bookingId', ParseUUIDPipe) bookingId: string): Pr
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Review updated successfully',
-    type: Review 
   })
   @ApiResponse({ 
     status: HttpStatus.FORBIDDEN, 
@@ -365,7 +357,7 @@ async getBookingReview(@Param('bookingId', ParseUUIDPipe) bookingId: string): Pr
     @Request() req: any,
   ): Promise<void> {
     const userId = req.user.id;
-    const isAdmin = req.user.role === UserRole.SUPER_ADMIN;
+    const isAdmin = req.user.role === UserRole.super_admin;
     return this.reviewsService.deleteReview(id, userId, isAdmin);
   }
 
@@ -375,7 +367,6 @@ async getBookingReview(@Param('bookingId', ParseUUIDPipe) bookingId: string): Pr
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Helpful vote toggled successfully',
-    type: Review 
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -390,14 +381,13 @@ async getBookingReview(@Param('bookingId', ParseUUIDPipe) bookingId: string): Pr
   }
 
   @Post(':id/response')
-//   @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+//   @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Add hostel response to a review (hostel admin only)' })
   @ApiParam({ name: 'id', description: 'Review ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Hostel response added successfully',
-    type: Review 
   })
   @ApiResponse({ 
     status: HttpStatus.FORBIDDEN, 

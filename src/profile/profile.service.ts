@@ -1,11 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { SupabaseService } from 'src/supabase/supabase.service';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 export interface School {
   id: string;
   name: string;
   domain: string;
-  location: string | { coordinates: [number, number] };
+  location?: any;
 }
 
 export interface UserProfile {
@@ -21,35 +21,45 @@ export interface UserProfile {
 
 @Injectable()
 export class ProfileService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async getUserProfile(userId: string): Promise<UserProfile> {
+  async getUserProfile(userId: string): Promise<any> {
     // Step 1: Get user data
-    const { data: user, error: userError } = await this.supabase.client
-      .from('users')
-      .select('id, name, email, phone, is_verified, role, school_id')
-      .eq('id', userId)
-      .single();
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        isVerified: true,
+        role: true,
+        schoolId: true
+      }
+    });
 
-    if (userError || !user) {
+    if (!user) {
       throw new NotFoundException('User profile not found');
     }
 
     // Step 2: Get school data if available
     let school: School | null = null;
-    if (user.school_id) {
-      const { data: schoolData, error: schoolError } = await this.supabase.client
-        .from('schools')
-        .select('id, name, domain, location')
-        .eq('id', user.school_id)
-        .single();
+    if (user.schoolId) {
+      const schoolData = await this.prisma.school.findUnique({
+        where: { id: user.schoolId },
+        select: {
+          id: true,
+          name: true,
+          domain: true
+          // location is omitted because it is a geography type not fully supported in standard Prisma select
+        }
+      });
 
-      if (!schoolError && schoolData) {
+      if (schoolData) {
         school = {
           id: schoolData.id,
           name: schoolData.name,
-          domain: schoolData.domain,
-          location: schoolData.location // This will be in WKB format
+          domain: schoolData.domain
         };
       }
     }
@@ -60,9 +70,9 @@ export class ProfileService {
       name: user.name,
       email: user.email,
       phone: user.phone,
-      is_verified: user.is_verified,
+      is_verified: user.isVerified,
       role: user.role,
-      school_id: user.school_id,
+      school_id: user.schoolId,
       school,
     };
   }

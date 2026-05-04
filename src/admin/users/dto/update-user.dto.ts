@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsOptional, IsString, IsEmail, IsEnum, IsPhoneNumber } from 'class-validator';
-import { Gender } from '../../../entities/user.entity';
+import { UserGender as Gender } from '@prisma/client';
 
 export class UpdateUserDto {
   @ApiProperty({ required: false })

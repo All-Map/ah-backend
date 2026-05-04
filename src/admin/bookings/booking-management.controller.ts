@@ -26,9 +26,8 @@ import {
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
-import { UserRole } from '../../entities/user.entity';
+import { UserRole, BookingStatus, PaymentStatusEnum } from '@prisma/client';
 import { BookingManagementService } from './booking-management.service';
-import { BookingStatus, PaymentStatus } from '../../entities/booking.entity';
 
 @ApiTags('Admin Bookings')
 @Controller('admin/bookings')
@@ -38,7 +37,7 @@ export class BookingManagementController {
   constructor(private readonly bookingService: BookingManagementService) {}
 
   @Get()
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Get all bookings with filtering' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -65,7 +64,7 @@ export class BookingManagementController {
       roomId,
       studentId,
       status: status as any,
-      paymentStatus: paymentStatus as PaymentStatus,
+      paymentStatus: paymentStatus as PaymentStatusEnum,
       bookingType: bookingType as any,
       checkInFrom,
       checkInTo,
@@ -79,7 +78,7 @@ export class BookingManagementController {
   }
 
   @Get('stats')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Get booking statistics' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -90,7 +89,7 @@ export class BookingManagementController {
   }
 
   @Get('upcoming/checkins')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Get upcoming check-ins' })
   @ApiQuery({ name: 'days', required: false, description: 'Number of days to look ahead', default: 7 })
   async getUpcomingCheckIns(@Query('days') days: number = 7) {
@@ -98,7 +97,7 @@ export class BookingManagementController {
   }
 
   @Get('upcoming/checkouts')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Get upcoming check-outs' })
   @ApiQuery({ name: 'days', required: false, description: 'Number of days to look ahead', default: 7 })
   async getUpcomingCheckOuts(@Query('days') days: number = 7) {
@@ -106,14 +105,14 @@ export class BookingManagementController {
   }
 
   @Get('overdue')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Get overdue bookings' })
   async getOverdueBookings() {
     return await this.bookingService.getOverdueBookings();
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Get booking by ID with full details' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({
@@ -125,7 +124,7 @@ export class BookingManagementController {
   }
 
   @Get(':id/payments')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Get booking payments' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   async getBookingPayments(@Param('id', ParseUUIDPipe) id: string) {
@@ -133,7 +132,7 @@ export class BookingManagementController {
   }
 
   @Patch(':id/status')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Update booking status' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   async updateBookingStatus(
@@ -145,18 +144,18 @@ export class BookingManagementController {
   }
 
   @Patch(':id/payment-status')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Update booking payment status' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   async updatePaymentStatus(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body('paymentStatus') paymentStatus: PaymentStatus,
+    @Body('paymentStatus') paymentStatus: PaymentStatusEnum,
   ) {
     return await this.bookingService.updatePaymentStatus(id, paymentStatus);
   }
 
   @Post(':id/payments')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Add payment to booking' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @UsePipes(new ValidationPipe({ transform: true }))
@@ -173,7 +172,7 @@ export class BookingManagementController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Delete a booking' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({
@@ -181,11 +180,11 @@ export class BookingManagementController {
     description: 'Booking deleted successfully',
   })
   async deleteBooking(@Param('id', ParseUUIDPipe) id: string) {
-    return await this.bookingService.updateBookingStatus(id, BookingStatus.CANCELLED, 'Admin deletion');
+    return await this.bookingService.updateBookingStatus(id, BookingStatus.cancelled, 'Admin deletion');
   }
 
   @Get('export/csv')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN)
+  @Roles(UserRole.super_admin, UserRole.hostel_admin)
   @ApiOperation({ summary: 'Export bookings to CSV' })
   async exportBookings(
     @Res() res: Response,
@@ -199,7 +198,7 @@ export class BookingManagementController {
     const csv = await this.bookingService.exportBookings({
       hostelId,
       status: status as any,
-      paymentStatus: paymentStatus as PaymentStatus,
+      paymentStatus: paymentStatus as PaymentStatusEnum,
       checkInFrom,
       checkInTo,
       search,

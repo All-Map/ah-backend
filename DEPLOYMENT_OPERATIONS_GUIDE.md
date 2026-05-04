@@ -41,7 +41,7 @@ http://localhost:1000
 - [ ] Rate limiting configured per environment
 - [ ] Helmet middleware enabled
 - [ ] CSRF protection in place
-- [ ] SQL injection prevention verified (TypeORM parameterized queries)
+- [ ] SQL injection prevention verified (Prisma parameterized queries)
 - [ ] Sentry DSN configured for error tracking
 - [ ] Logging sanitized (no passwords/secrets logged)
 
@@ -112,7 +112,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 1000
-      SUPABASE_DB_URL: ${SUPABASE_DB_URL}
+      DATABASE_URL: ${DATABASE_URL}
+      DIRECT_DATABASE_URL: ${DIRECT_DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
       PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
       CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
@@ -223,11 +224,11 @@ spec:
           env:
             - name: NODE_ENV
               value: 'production'
-            - name: SUPABASE_DB_URL
+            - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
-                  key: database-url
+                  key: DATABASE_URL
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -309,7 +310,8 @@ kubectl create namespace production
 
 # Create secrets
 kubectl create secret generic app-secrets \
-  --from-literal=database-url=$SUPABASE_DB_URL \
+  --from-literal=DATABASE_URL=$DATABASE_URL \
+  --from-literal=DIRECT_DATABASE_URL=$DIRECT_DATABASE_URL \
   --from-literal=jwt-secret=$JWT_SECRET \
   -n production
 
@@ -370,7 +372,7 @@ jobs:
       - name: Run tests
         run: npm test -- --coverage
         env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL_TEST }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_TEST }}
           JWT_SECRET: test-secret
 
       - name: Upload coverage to Codecov
@@ -572,17 +574,13 @@ EXPLAIN ANALYZE SELECT * FROM bookings
 VACUUM ANALYZE;
 ```
 
-### Connection Pooling
+### Connection Pooling (Prisma)
 
-```typescript
-// typeorm.config.ts
-{
-  maxConnections: 10,
-  synchronize: false,
-  logging: process.env.NODE_ENV === 'development',
-  connectionName: 'default',
-  keepConnectionAlive: true,
-}
+Prisma manages connection pooling automatically via the `DATABASE_URL`.
+
+```bash
+# Add pool size to URL
+DATABASE_URL="postgresql://user:pass@host:port/db?connection_limit=10"
 ```
 
 ---
@@ -615,7 +613,7 @@ psql -U postgres -h db.supabase.co -d postgres -c "SELECT 1"
 docker logs ah-backend
 
 # Verify environment variables
-env | grep SUPABASE
+env | grep DATABASE_URL
 ```
 
 ### Issue: JWT Token Verification Fails

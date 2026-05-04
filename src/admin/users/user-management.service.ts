@@ -4,18 +4,16 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, Between, In, Not, IsNull } from 'typeorm';
-import { User, Gender, UserRole } from '../../entities/user.entity';
-import { Booking } from '../../entities/booking.entity';
-import { Hostel } from '../../entities/hostel.entity';
-import { School } from '../../entities/school.entity';
+import { UserGender, UserRole, UserStatus, Prisma } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserFilterDto } from './dto/user-filter.dto';
 import * as bcrypt from 'bcrypt';
 import { MailService } from '../../mail/mail.service';
 import * as crypto from 'crypto';
+
+export type Gender = UserGender;
 
 export interface UserStats {
   total: number;
@@ -36,18 +34,18 @@ export interface UserResponse {
   name: string;
   email: string;
   phone?: string;
-  gender?: Gender;
+  gender?: UserGender | null;
   is_verified: boolean;
   status: 'unverified' | 'pending' | 'verified';
   role: UserRole;
-  school_id?: string;
-  created_at?: Date;
+  school_id?: string | null;
+  created_at?: Date | null;
   onboarding_completed: boolean;
   terms_accepted: boolean;
-  emergency_contact_name?: string;
-  emergency_contact_phone?: string;
-  emergency_contact_relationship?: string;
-  emergency_contact_email?: string;
+  emergency_contact_name?: string | null;
+  emergency_contact_phone?: string | null;
+  emergency_contact_relationship?: string | null;
+  emergency_contact_email?: string | null;
   school?: {
     id: string;
     name: string;
@@ -60,17 +58,37 @@ export interface UserResponse {
   };
 }
 
+function toUserResponse(
+  user: Prisma.UserGetPayload<object>,
+  school?: { id: string; name: string; domain: string } | null,
+  stats?: UserResponse['stats'],
+): UserResponse {
+  return {
+    id: user.id,
+    name: user.name ?? '',
+    email: user.email,
+    phone: user.phone ?? undefined,
+    gender: user.gender,
+    is_verified: user.isVerified,
+    status: user.status as UserResponse['status'],
+    role: user.role,
+    school_id: user.schoolId,
+    created_at: user.createdAt,
+    onboarding_completed: user.onboardingCompleted,
+    terms_accepted: user.termsAccepted,
+    emergency_contact_name: user.emergencyContactName,
+    emergency_contact_phone: user.emergencyContactPhone,
+    emergency_contact_relationship: user.emergencyContactRelationship,
+    emergency_contact_email: user.emergencyContactEmail,
+    school: school ?? undefined,
+    stats,
+  };
+}
+
 @Injectable()
 export class UserManagementService {
   constructor(
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-    @InjectRepository(Booking)
-    private readonly bookingRepository: Repository<Booking>,
-    @InjectRepository(Hostel)
-    private readonly hostelRepository: Repository<Hostel>,
-    @InjectRepository(School)
-    private readonly schoolRepository: Repository<School>,
+    private readonly prisma: PrismaService,
     private readonly mailService: MailService,
   ) {}
 
@@ -95,72 +113,56 @@ export class UserManagementService {
       sortOrder = 'DESC',
     } = filterDto;
 
-    const queryBuilder = this.userRepository
-      .createQueryBuilder('user')
-      .leftJoinAndSelect('user.school', 'school')
-      .select([
-        'user.id',
-        'user.name',
-        'user.email',
-        'user.phone',
-        'user.gender',
-        'user.is_verified',
-        'user.status',
-        'user.role',
-        'user.school_id',
-        'user.created_at',
-        'user.onboarding_completed',
-        'user.terms_accepted',
-        'user.emergency_contact_name',
-        'user.emergency_contact_phone',
-        'user.emergency_contact_relationship',
-        'user.emergency_contact_email',
-        'school.id',
-        'school.name',
-        'school.domain',
-      ]);
-
-    // Apply filters
-    if (role) {
-      queryBuilder.andWhere('user.role = :role', { role });
-    }
-
-    if (status) {
-      queryBuilder.andWhere('user.status = :status', { status });
-    }
-
-    if (is_verified !== undefined) {
-      queryBuilder.andWhere('user.is_verified = :is_verified', { is_verified });
-    }
-
-    if (school_id) {
-      queryBuilder.andWhere('user.school_id = :school_id', { school_id });
-    }
-
+    const where: Prisma.UserWhereInput = {};
+    if (role) where.role = role;
+    if (status) where.status = status as UserStatus;
+    if (is_verified !== undefined) where.isVerified = is_verified;
+    if (school_id) where.schoolId = school_id;
     if (search) {
-      queryBuilder.andWhere(
-        '(user.name ILIKE :search OR user.email ILIKE :search OR user.phone ILIKE :search)',
-        { search: `%${search}%` },
-      );
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
-    // Apply sorting
-    queryBuilder.orderBy(`user.${sortBy}`, sortOrder);
+    const sortFieldMap: Record<string, Prisma.UserScalarFieldEnum> = {
+      created_at: 'createdAt',
+      createdAt: 'createdAt',
+      email: 'email',
+      name: 'name',
+      role: 'role',
+      status: 'status',
+    };
+    const orderField = sortFieldMap[sortBy] ?? 'createdAt';
+    const orderDir = String(sortOrder).toUpperCase() === 'ASC' ? 'asc' : 'desc';
 
-    // Apply pagination
-    const skip = (page - 1) * limit;
-    queryBuilder.skip(skip).take(limit);
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: { [orderField]: orderDir },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
 
-    const [users, total] = await queryBuilder.getManyAndCount();
+    const schoolIds = [...new Set(users.map((u) => u.schoolId).filter(Boolean))] as string[];
+    const schools =
+      schoolIds.length > 0
+        ? await this.prisma.school.findMany({ where: { id: { in: schoolIds } } })
+        : [];
+    const schoolMap = new Map(schools.map((s) => [s.id, s]));
 
-    // Fetch additional stats for each user
     const usersWithStats = await Promise.all(
       users.map(async (user) => {
         const stats = await this.getUserStats(user.id);
-        return {
-          ...user,
+        const sch = user.schoolId ? schoolMap.get(user.schoolId) : null;
+        return toUserResponse(
+          user,
+          sch ? { id: sch.id, name: sch.name, domain: sch.domain } : null,
           stats,
-        } as UserResponse;
+        );
       }),
     );
 
@@ -178,7 +180,7 @@ export class UserManagementService {
   async getOverallUserStats(): Promise<UserStats> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -195,24 +197,29 @@ export class UserManagementService {
       active_today,
       previous_month_total,
     ] = await Promise.all([
-      this.userRepository.count(),
-      this.userRepository.count({ where: { is_verified: true } }),
-      this.userRepository.count({ where: { is_verified: false } }),
-      this.userRepository.count({ where: { role: UserRole.STUDENT } }),
-      this.userRepository.count({ where: { role: UserRole.HOSTEL_ADMIN } }),
-      this.userRepository.count({ where: { role: UserRole.SUPER_ADMIN } }),
-      this.userRepository.count({ where: { status: 'pending' } }),
-      this.userRepository.count({ where: { school_id: Not(IsNull()) } }),
-      this.userRepository.count({ where: { school_id: IsNull() } }),
-      this.userRepository.count({ where: { created_at: Between(today, new Date()) } }),
-      this.userRepository.count({ 
-        where: { created_at: Between(thirtyDaysAgo, today) } 
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { isVerified: true } }),
+      this.prisma.user.count({ where: { isVerified: false } }),
+      this.prisma.user.count({ where: { role: UserRole.student } }),
+      this.prisma.user.count({ where: { role: UserRole.hostel_admin } }),
+      this.prisma.user.count({ where: { role: UserRole.super_admin } }),
+      this.prisma.user.count({ where: { status: 'pending' } }),
+      this.prisma.user.count({ where: { schoolId: { not: null } } }),
+      this.prisma.user.count({ where: { schoolId: null } }),
+      this.prisma.user.count({
+        where: { createdAt: { gte: today } },
+      }),
+      this.prisma.user.count({
+        where: { createdAt: { gte: thirtyDaysAgo, lt: today } },
       }),
     ]);
 
-    const growth_30d = previous_month_total > 0 
-      ? ((active_today - previous_month_total) / previous_month_total) * 100 
-      : active_today > 0 ? 100 : 0;
+    const growth_30d =
+      previous_month_total > 0
+        ? ((active_today - previous_month_total) / previous_month_total) * 100
+        : active_today > 0
+          ? 100
+          : 0;
 
     return {
       total,
@@ -231,14 +238,14 @@ export class UserManagementService {
 
   async getUserStats(userId: string) {
     const [totalBookings, activeBookings, totalHostels] = await Promise.all([
-      this.bookingRepository.count({ where: { studentId: userId } }),
-      this.bookingRepository.count({ 
-        where: { 
+      this.prisma.booking.count({ where: { studentId: userId } }),
+      this.prisma.booking.count({
+        where: {
           studentId: userId,
-          status: In(['pending', 'confirmed', 'checked_in']) 
-        } 
+          status: { in: ['pending', 'confirmed', 'checked_in'] },
+        },
       }),
-      this.hostelRepository.count({ where: { adminId: userId } }),
+      this.prisma.hostel.count({ where: { adminId: userId } }),
     ]);
 
     return {
@@ -249,45 +256,26 @@ export class UserManagementService {
   }
 
   async getUserById(id: string): Promise<UserResponse> {
-    const user = await this.userRepository.findOne({
-      where: { id },
-      relations: ['school'],
-    });
+    const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
+    const school = user.schoolId
+      ? await this.prisma.school.findUnique({ where: { id: user.schoolId } })
+      : null;
     const stats = await this.getUserStats(user.id);
 
-    return {
-      ...user,
+    return toUserResponse(
+      user,
+      school ? { id: school.id, name: school.name, domain: school.domain } : null,
       stats,
-    } as UserResponse;
+    );
   }
 
-//   async getUserStats(userId: string) {
-//     const [totalBookings, activeBookings, totalHostels] = await Promise.all([
-//       this.bookingRepository.count({ where: { studentId: userId } }),
-//       this.bookingRepository.count({ 
-//         where: { 
-//           studentId: userId,
-//           status: In(['pending', 'confirmed', 'checked_in']) 
-//         } 
-//       }),
-//       this.hostelRepository.count({ where: { adminId: userId } }),
-//     ]);
-
-//     return {
-//       totalBookings,
-//       activeBookings,
-//       totalHostels,
-//     };
-//   }
-
   async createUser(createUserDto: CreateUserDto): Promise<UserResponse> {
-    // Check if user already exists
-    const existingUser = await this.userRepository.findOne({
+    const existingUser = await this.prisma.user.findUnique({
       where: { email: createUserDto.email },
     });
 
@@ -295,68 +283,55 @@ export class UserManagementService {
       throw new ConflictException('User with this email already exists');
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
 
-    const userData = {
-      ...createUserDto,
-      password_hash: hashedPassword,
-      verification_token: createUserDto.is_verified ? null : crypto.randomBytes(32).toString('hex'),
-      verification_token_expires_at: createUserDto.is_verified ? null : new Date(Date.now() + 24 * 60 * 60 * 1000),
-      created_at: createUserDto.is_verified ? new Date() : null,
-      status: createUserDto.is_verified ? 'verified' : 'pending',
-    };
+    const verificationToken = createUserDto.is_verified
+      ? null
+      : crypto.randomBytes(32).toString('hex');
+    const tokenExpiry = createUserDto.is_verified
+      ? null
+      : new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    const user = this.userRepository.create(userData as any);
-    const savedUser = await this.userRepository.save(user);
+    const savedUser = await this.prisma.user.create({
+      data: {
+        email: createUserDto.email,
+        name: createUserDto.name,
+        phone: createUserDto.phone,
+        gender: createUserDto.gender,
+        passwordHash: hashedPassword,
+        role: createUserDto.role ?? UserRole.student,
+        schoolId: createUserDto.school_id,
+        isVerified: createUserDto.is_verified ?? false,
+        verificationToken,
+        verificationTokenExpiresAt: tokenExpiry,
+        createdAt: createUserDto.is_verified ? new Date() : null,
+        status: createUserDto.is_verified ? 'verified' : 'pending',
+        termsAccepted: createUserDto.terms_accepted ?? false,
+        termsAcceptedAt: createUserDto.terms_accepted ? new Date() : null,
+      },
+    });
 
-    // Send verification email if not verified
-    if (!createUserDto.is_verified && savedUser) {
+    if (!createUserDto.is_verified && verificationToken) {
       try {
-        await this.mailService.sendVerificationEmail(
-          (savedUser as any).email,
-          (savedUser as any).verification_token,
-        );
+        await this.mailService.sendVerificationEmail(savedUser.email, verificationToken);
       } catch (error) {
         console.error('Failed to send verification email:', error);
       }
     }
 
-    const stats = await this.getUserStats((savedUser as any).id);
-
-    const response: UserResponse = {
-      id: (savedUser as any).id,
-      name: (savedUser as any).name,
-      email: (savedUser as any).email,
-      phone: (savedUser as any).phone,
-      gender: (savedUser as any).gender,
-      is_verified: (savedUser as any).is_verified,
-      status: (savedUser as any).status,
-      role: (savedUser as any).role,
-      school_id: (savedUser as any).school_id,
-      created_at: (savedUser as any).created_at,
-      onboarding_completed: (savedUser as any).onboarding_completed,
-      terms_accepted: (savedUser as any).terms_accepted,
-      emergency_contact_name: (savedUser as any).emergency_contact_name,
-      emergency_contact_phone: (savedUser as any).emergency_contact_phone,
-      emergency_contact_relationship: (savedUser as any).emergency_contact_relationship,
-      emergency_contact_email: (savedUser as any).emergency_contact_email,
-      stats,
-    };
-
-    return response;
+    const stats = await this.getUserStats(savedUser.id);
+    return toUserResponse(savedUser, undefined, stats);
   }
 
   async updateUser(id: string, updateUserDto: UpdateUserDto): Promise<UserResponse> {
-    const user = await this.userRepository.findOne({ where: { id } });
+    const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Check email uniqueness if email is being updated
     if (updateUserDto.email && updateUserDto.email !== user.email) {
-      const existingUser = await this.userRepository.findOne({
+      const existingUser = await this.prisma.user.findUnique({
         where: { email: updateUserDto.email },
       });
 
@@ -365,38 +340,51 @@ export class UserManagementService {
       }
     }
 
-    Object.assign(user, updateUserDto);
-    const updatedUser = await this.userRepository.save(user);
+    const data: Prisma.UserUpdateInput = {};
+    if (updateUserDto.name !== undefined) data.name = updateUserDto.name;
+    if (updateUserDto.email !== undefined) data.email = updateUserDto.email;
+    if (updateUserDto.phone !== undefined) data.phone = updateUserDto.phone;
+    if (updateUserDto.gender !== undefined) data.gender = updateUserDto.gender;
+    if (updateUserDto.school_id !== undefined) data.schoolId = updateUserDto.school_id;
+    if (updateUserDto.emergency_contact_name !== undefined)
+      data.emergencyContactName = updateUserDto.emergency_contact_name;
+    if (updateUserDto.emergency_contact_phone !== undefined)
+      data.emergencyContactPhone = updateUserDto.emergency_contact_phone;
+    if (updateUserDto.emergency_contact_relationship !== undefined)
+      data.emergencyContactRelationship = updateUserDto.emergency_contact_relationship;
+    if (updateUserDto.emergency_contact_email !== undefined)
+      data.emergencyContactEmail = updateUserDto.emergency_contact_email;
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data,
+    });
 
     const stats = await this.getUserStats(updatedUser.id);
-
-    return {
-      ...updatedUser,
-      stats,
-    } as UserResponse;
+    return toUserResponse(updatedUser, undefined, stats);
   }
 
-  async updateUserStatus(id: string, status: 'unverified' | 'pending' | 'verified'): Promise<UserResponse> {
-    const user = await this.userRepository.findOne({ where: { id } });
+  async updateUserStatus(
+    id: string,
+    status: 'unverified' | 'pending' | 'verified',
+  ): Promise<UserResponse> {
+    const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    user.status = status;
-    user.is_verified = status === 'verified';
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data: {
+        status,
+        isVerified: status === 'verified',
+        ...(status === 'verified' && !user.createdAt ? { createdAt: new Date() } : {}),
+      },
+    });
 
-    if (status === 'verified' && !user.created_at) {
-      user.created_at = new Date();
-    }
-
-    const updatedUser = await this.userRepository.save(user);
     const stats = await this.getUserStats(updatedUser.id);
-
-    return {
-      ...updatedUser,
-      stats,
-    } as UserResponse;
+    return toUserResponse(updatedUser, undefined, stats);
   }
 
   async verifyUser(id: string): Promise<UserResponse> {
@@ -404,15 +392,14 @@ export class UserManagementService {
   }
 
   async updateUserRole(id: string, role: UserRole): Promise<UserResponse> {
-    const user = await this.userRepository.findOne({ where: { id } });
+    const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Check if user has active bookings or hostels that might be affected
-    if (user.role === UserRole.HOSTEL_ADMIN && role !== UserRole.HOSTEL_ADMIN) {
-      const hasHostels = await this.hostelRepository.count({ where: { adminId: id } });
+    if (user.role === UserRole.hostel_admin && role !== UserRole.hostel_admin) {
+      const hasHostels = await this.prisma.hostel.count({ where: { adminId: id } });
       if (hasHostels > 0) {
         throw new BadRequestException(
           'Cannot change role of user who manages hostels. Please transfer hostels first.',
@@ -420,31 +407,26 @@ export class UserManagementService {
       }
     }
 
-    user.role = role;
-    const updatedUser = await this.userRepository.save(user);
-    const stats = await this.getUserStats(updatedUser.id);
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data: { role },
+    });
 
-    return {
-      ...updatedUser,
-      stats,
-    } as UserResponse;
+    const stats = await this.getUserStats(updatedUser.id);
+    return toUserResponse(updatedUser, undefined, stats);
   }
 
   async deleteUser(id: string): Promise<{ message: string }> {
-    const user = await this.userRepository.findOne({ 
-      where: { id },
-      relations: ['school'],
-    });
+    const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Check for active bookings
-    const activeBookings = await this.bookingRepository.count({
-      where: { 
+    const activeBookings = await this.prisma.booking.count({
+      where: {
         studentId: id,
-        status: In(['pending', 'confirmed', 'checked_in']),
+        status: { in: ['pending', 'confirmed', 'checked_in'] },
       },
     });
 
@@ -454,9 +436,8 @@ export class UserManagementService {
       );
     }
 
-    // Check for hostels if user is a hostel admin
-    if (user.role === UserRole.HOSTEL_ADMIN) {
-      const hostelsCount = await this.hostelRepository.count({
+    if (user.role === UserRole.hostel_admin) {
+      const hostelsCount = await this.prisma.hostel.count({
         where: { adminId: id },
       });
 
@@ -467,35 +448,42 @@ export class UserManagementService {
       }
     }
 
-    // Soft delete (update status)
-    user.status = 'unverified';
-    user.is_verified = false;
-    await this.userRepository.save(user);
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        status: 'unverified',
+        isVerified: false,
+      },
+    });
 
     return { message: 'User deactivated successfully' };
   }
 
   async sendVerificationEmail(id: string): Promise<{ message: string }> {
-    const user = await this.userRepository.findOne({ where: { id } });
+    const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    if (user.is_verified) {
+    if (user.isVerified) {
       throw new BadRequestException('User is already verified');
     }
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    user.verification_token = verificationToken;
-    user.verification_token_expires_at = tokenExpiry;
-    await this.userRepository.save(user);
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        verificationToken,
+        verificationTokenExpiresAt: tokenExpiry,
+      },
+    });
 
     try {
       await this.mailService.sendVerificationEmail(user.email, verificationToken);
-    } catch (error) {
+    } catch {
       throw new BadRequestException('Failed to send verification email');
     }
 
@@ -512,7 +500,7 @@ export class UserManagementService {
       try {
         await this.verifyUser(userId);
         result.verified++;
-      } catch (error) {
+      } catch {
         result.failed.push(userId);
       }
     }
@@ -530,7 +518,7 @@ export class UserManagementService {
       try {
         await this.deleteUser(userId);
         result.deleted++;
-      } catch (error) {
+      } catch {
         result.failed.push(userId);
       }
     }
@@ -541,7 +529,6 @@ export class UserManagementService {
   async exportUsers(filterDto: UserFilterDto): Promise<string> {
     const { users } = await this.getUsers({ ...filterDto, limit: 1000 });
 
-    // Convert to CSV format
     const headers = [
       'ID',
       'Name',

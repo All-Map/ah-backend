@@ -127,10 +127,8 @@ export class UpdateHostelDto {
   @IsOptional()
   adminId?: string;
 
-  @ValidateNested()
-  @Type(() => UpdateLocationDto)
   @IsOptional()
-  location?: UpdateLocationDto;
+  location?: any;
 
   @IsString()
   @IsOptional()
@@ -140,15 +138,11 @@ export class UpdateHostelDto {
   @IsOptional()
   schoolId?: string;
 
-  @IsArray()
-  @IsString({ each: true })
   @IsOptional()
-  images?: string[];
+  images?: any;
 
-  @ValidateNested()
-  @Type(() => UpdateAmenitiesDto)
   @IsOptional()
-  amenities?: UpdateAmenitiesDto;
+  amenities?: any;
 
   // Pricing and payment fields
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -161,21 +155,15 @@ export class UpdateHostelDto {
   @IsOptional()
   payment_method?: PaymentMethod;
 
-  @ValidateIf(o => o.payment_method === PaymentMethod.BANK || o.payment_method === PaymentMethod.BOTH)
-  @ValidateNested()
-  @Type(() => UpdateBankDetailsDto)
   @IsOptional()
-  bank_details?: UpdateBankDetailsDto;
+  bank_details?: any;
 
-  @ValidateIf(o => o.payment_method === PaymentMethod.MOMO || o.payment_method === PaymentMethod.BOTH)
-  @ValidateNested()
-  @Type(() => UpdateMomoDetailsDto)
   @IsOptional()
-  momo_details?: UpdateMomoDetailsDto;
+  momo_details?: any;
 
   // Additional hostel information
   @IsNumber()
-  @Min(1)
+  @Min(0)
   @IsOptional()
   @Transform(({ value }) => value ? parseInt(value) : undefined)
   max_occupancy?: number;
@@ -184,10 +172,8 @@ export class UpdateHostelDto {
   @IsOptional()
   house_rules?: string;
 
-  @IsArray()
-  @IsString({ each: true })
   @IsOptional()
-  nearby_facilities?: string[];
+  nearby_facilities?: any;
 
   @IsString()
   @IsOptional()

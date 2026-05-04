@@ -51,7 +51,7 @@ export class MailService {
     }
   }
 
-    async sendAdminVerificationEmail(email: string, token: string) {
+  async sendAdminVerificationEmail(email: string, token: string) {
     const verificationUrl = `${this.config.get('ADMIN_FRONTEND_URL')}/verify-email?token=${token}`;
     const html = this.renderTemplate('verify', { verificationUrl });
 
@@ -90,6 +90,8 @@ export class MailService {
         throw new Error(`Failed to send password reset email: ${error.message}`);
       }
 
+      console.log("message sent")
+
       return data;
     } catch (error) {
       console.error('Error sending password reset email:', error);
@@ -124,7 +126,7 @@ export class MailService {
   async sendVerificationApproval(email: string): Promise<void> {
     const subject = 'Admin Verification Approved';
     const html = `<p>Your admin verification request has been approved. You can now access the admin dashboard.</p>`;
-    
+
     try {
       const { data, error } = await this.resend.emails.send({
         from: this.config.get('EMAIL_FROM') || 'Acme <onboarding@resend.dev>',
@@ -145,7 +147,7 @@ export class MailService {
   async sendVerificationRejection(email: string, reason: string): Promise<void> {
     const subject = 'Admin Verification Rejected';
     const html = `<p>Your admin verification request was rejected. Reason: ${reason}</p>`;
-    
+
     try {
       const { data, error } = await this.resend.emails.send({
         from: this.config.get('EMAIL_FROM') || 'Acme <onboarding@resend.dev>',
@@ -166,7 +168,7 @@ export class MailService {
   async sendNewVerificationRequest(email: string): Promise<void> {
     const subject = 'New Admin Verification Request';
     const html = `<p>A new admin verification request needs your review.</p>`;
-    
+
     try {
       const { data, error } = await this.resend.emails.send({
         from: this.config.get('EMAIL_FROM') || 'Acme <onboarding@resend.dev>',

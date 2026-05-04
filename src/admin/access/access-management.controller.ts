@@ -21,7 +21,7 @@ import {
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
-import { UserRole } from '../../entities/user.entity';
+import { UserRole } from '@prisma/client';
 import { AccessManagementService } from './access-management.service';
 
 @ApiTags('Admin Access')
@@ -32,7 +32,7 @@ export class AccessManagementController {
   constructor(private readonly accessService: AccessManagementService) {}
 
   @Get()
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get all access records with filtering' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -60,7 +60,7 @@ export class AccessManagementController {
   }
 
   @Get('stats')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get access statistics' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -71,7 +71,7 @@ export class AccessManagementController {
   }
 
   @Get('preview-usage')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get preview usage records' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -85,7 +85,7 @@ export class AccessManagementController {
   }
 
   @Get('preview-usage/stats')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get preview usage statistics' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -96,7 +96,7 @@ export class AccessManagementController {
   }
 
   @Get('user/:userId')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get access history for a user' })
   @ApiParam({ name: 'userId', description: 'User ID' })
   @ApiResponse({
@@ -108,7 +108,7 @@ export class AccessManagementController {
   }
 
   @Get('revenue')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Get revenue statistics' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -121,7 +121,7 @@ export class AccessManagementController {
   }
 
   @Post('grant/:userId')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Grant access to a user manually' })
   @ApiParam({ name: 'userId', description: 'User ID' })
   @ApiResponse({
@@ -137,7 +137,7 @@ export class AccessManagementController {
   }
 
   @Patch('extend/:id')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Extend access expiration' })
   @ApiParam({ name: 'id', description: 'Access record ID' })
   @ApiResponse({
@@ -152,7 +152,7 @@ export class AccessManagementController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Revoke access' })
   @ApiParam({ name: 'id', description: 'Access record ID' })
   @ApiResponse({
@@ -164,7 +164,7 @@ export class AccessManagementController {
   }
 
   @Get('export')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Export access records to CSV' })
   async exportAccessRecords(
     @Query('search') search?: string,

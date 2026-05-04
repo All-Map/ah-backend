@@ -1,11 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, Like, In, Not, DataSource } from 'typeorm';
-import { Booking, BookingStatus, BookingType, PaymentStatus } from '../entities/booking.entity';
-import { Payment, PaymentMethod, PaymentType } from '../entities/payment.entity';
-import { Room, RoomStatus } from '../entities/room.entity';
-import { Hostel } from '../entities/hostel.entity';
-import { RoomType } from '../entities/room-type.entity';
+import { PrismaService } from '../prisma/prisma.service';
+import { BookingStatus, BookingType, PaymentStatusEnum as PaymentStatus } from '@prisma/client';
+import { PaymentMethodEnum as PaymentMethod, PaymentTypeEnum as PaymentType } from '@prisma/client';
+import { Prisma, Booking, Room, User, RoomType, Payment, Deposit } from '@prisma/client';
 import {
   CreateBookingDto,
   UpdateBookingDto,
@@ -19,29 +16,17 @@ import {
   BookingReportFilterDto,
   VerifyPaymentDto
 } from './dto/booking.dto';
-import { Gender, User } from 'src/entities/user.entity';
 import { PaystackService } from 'src/paystack/paystack.service';
 import { DepositsService } from 'src/deposits/deposits.service';
-import { Deposit, DepositStatus, DepositType } from 'src/entities/deposit.entity';
+import { DepositStatus, DepositType } from '@prisma/client';
+import { UserGender as Gender } from '@prisma/client';
 
 @Injectable()
 export class BookingsService {
   private readonly BOOKING_FEE = 70; 
 
   constructor(
-    @InjectRepository(Booking)
-    private readonly bookingRepository: Repository<Booking>,
-    @InjectRepository(Payment)
-    private readonly paymentRepository: Repository<Payment>,
-    @InjectRepository(Room)
-    private readonly roomRepository: Repository<Room>,
-    @InjectRepository(Hostel)
-    private readonly hostelRepository: Repository<Hostel>,
-    @InjectRepository(RoomType)
-    private readonly roomTypeRepository: Repository<RoomType>,
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-    private readonly dataSource: DataSource,
+    private readonly prisma: PrismaService,
     private readonly paystackService: PaystackService,
     private readonly depositsService: DepositsService
   ) {}
@@ -93,26 +78,27 @@ const {
     }
 
     // Verify hostel and room exist
-    const [hostel, room] = await Promise.all([
-      this.hostelRepository.findOne({ where: { id: hostelId } }),
-      this.roomRepository.findOne({ where: { id: roomId, hostelId }, relations: ['roomType'] })
-    ]);
+    const hostel = await this.prisma.hostel.findUnique({ where: { id: hostelId } });
+    const room = await this.prisma.room.findUnique({ 
+      where: { id: roomId },
+      include: { roomType: true } 
+    });
 
     if (!hostel) {
       throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
     }
 
-    if (!room) {
+    if (!room || room.hostelId !== hostelId) {
       throw new NotFoundException(`Room with ID ${roomId} not found in this hostel`);
     }
 
     // Check if room is available
-    if (!room.isAvailable()) {
+    if (room.status?.toUpperCase() !== 'AVAILABLE' || room.currentOccupancy >= room.maxOccupancy) {
       throw new ConflictException('Room is not available for booking');
     }
 
     // Try to find the user - but don't fail if not found
-    const user = await this.userRepository.findOne({ where: { id: studentId } });
+    const user = await this.prisma.user.findUnique({ where: { id: studentId } });
     
     // Only validate gender and single booking constraint if user exists
     if (user) {
@@ -144,11 +130,12 @@ const {
     }
 
     // Check for conflicting bookings
-    const conflictingBookings = await this.bookingRepository.find({
+    const conflictingBookings = await this.prisma.booking.findMany({
       where: {
         roomId,
-        status: In([BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]),
-        checkInDate: Between(checkIn, checkOut),
+        status: { in: [BookingStatus.pending, BookingStatus.confirmed, BookingStatus.checked_in] },
+        checkInDate: { lte: checkOut },
+        checkOutDate: { gte: checkIn }
       }
     });
 
@@ -165,65 +152,135 @@ const {
     );
 
     // Create booking in transaction
-    return await this.dataSource.transaction(async manager => {
-      const booking = manager.create(Booking, {
-        hostelId,
-        roomId,
-        studentId, // Can be any string - doesn't need to be a valid user ID
-        checkInDate: checkIn,
-        checkOutDate: checkOut,
-        bookingType,
-        totalAmount: totalRoomAmount,
-        amountPaid: this.BOOKING_FEE,
-        amountDue: totalRoomAmount,
-        paymentDueDate: new Date(checkIn.getTime() - 7 * 24 * 60 * 60 * 1000),
-        status: BookingStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PARTIAL,
-        confirmedAt: new Date(),
-        bookingFee: this.BOOKING_FEE,
-        bookingFeePaid: true,
-        paymentReference: paymentReference,
-        bookingFeePaidAt: new Date(paymentVerification.paidAt),
-        ...bookingData
+    return await this.prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.create({
+        data: {
+          hostelId,
+          roomId,
+          studentId, // Can be any string - doesn't need to be a valid user ID
+          checkInDate: checkIn,
+          checkOutDate: checkOut,
+          bookingType,
+          totalAmount: totalRoomAmount,
+          amountPaid: this.BOOKING_FEE,
+          amountDue: totalRoomAmount,
+          paymentDueDate: new Date(checkIn.getTime() - 7 * 24 * 60 * 60 * 1000),
+          status: BookingStatus.confirmed,
+          paymentStatus: PaymentStatus.partial,
+          confirmedAt: new Date(),
+          bookingFee: this.BOOKING_FEE,
+          bookingFeePaid: true,
+          paymentReference: paymentReference,
+          bookingFeePaidAt: new Date(paymentVerification.paidAt),
+          studentName: bookingData.studentName || 'Admin Booking',
+          studentEmail: bookingData.studentEmail || 'admin@booking.com',
+          studentPhone: bookingData.studentPhone || '0000000000',
+          emergencyContacts: bookingData.emergencyContacts ? (bookingData.emergencyContacts as any) : null as any,
+          specialRequests: bookingData.specialRequests,
+          notes: bookingData.notes,
+          depositAmount: depositAmount,
+          autoCancelAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Default auto cancel deadline 7 days
+        }
       });
-
-      const savedBooking = await manager.save(Booking, booking);
-
-       savedBooking.setAutoCancelDeadline();
-      await manager.save(Booking, savedBooking);
 
       // Create payment record
-      const payment = manager.create(Payment, {
-        bookingId: savedBooking.id,
-        amount: this.BOOKING_FEE,
-        paymentMethod: PaymentMethod.CARD,
-        paymentType: PaymentType.BOOKING_PAYMENT,
-        transactionRef: paymentReference,
-        notes: 'Booking fee via Paystack',
-        status: 'completed',
-        paymentDate: new Date(paymentVerification.paidAt)
+      await tx.payment.create({
+        data: {
+          bookingId: booking.id,
+          amount: this.BOOKING_FEE,
+          paymentMethod: PaymentMethod.card,
+          paymentType: PaymentType.booking_payment,
+          transactionRef: paymentReference,
+          notes: 'Booking fee via Paystack',
+          metadata: null as any,
+          paymentDate: new Date(paymentVerification.paidAt)
+        }
       });
 
-      await manager.save(Payment, payment);
-
       // Update room occupancy
-      room.currentOccupancy += 1;
-      if (room.currentOccupancy >= room.maxOccupancy) {
-        room.status = RoomStatus.OCCUPIED;
-      }
-      await manager.save(Room, room);
+      const newOccupancy = room.currentOccupancy + 1;
+      const newStatus = newOccupancy >= room.maxOccupancy ? 'OCCUPIED' : room.status;
+      await tx.room.update({
+        where: { id: room.id },
+        data: { currentOccupancy: newOccupancy, status: newStatus }
+      });
 
       // Update room type availability
-      const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
-      if (roomType && roomType.availableRooms > 0) {
-        roomType.availableRooms -= 1;
-        await manager.save(RoomType, roomType);
+      if (room.roomType && room.roomType.availableRooms > 0) {
+        await tx.roomType.update({
+          where: { id: room.roomTypeId },
+          data: { availableRooms: { decrement: 1 } }
+        });
       }
 
-      console.log('✅ Booking created successfully:', savedBooking.id);
+      console.log('✅ Booking created successfully:', booking.id);
 
-      return savedBooking;
+      return booking;
     });
+  }
+
+  async checkAvailability(
+    hostelId: string,
+    checkIn: string,
+    checkOut: string,
+    roomTypeId?: string
+  ) {
+    const checkInDate = new Date(checkIn);
+    const checkOutDate = new Date(checkOut);
+
+    // Get all rooms for the hostel
+    const rooms = await this.prisma.room.findMany({
+      where: { 
+        hostelId, 
+        ...(roomTypeId && { roomTypeId }) 
+      },
+      include: { roomType: true }
+    });
+
+    // Get conflicting bookings
+    const conflictingBookings = await this.prisma.booking.findMany({
+      where: {
+        hostelId,
+        status: { in: [BookingStatus.confirmed, BookingStatus.checked_in] },
+        OR: [
+          {
+            checkInDate: { lte: checkOutDate },
+            checkOutDate: { gte: checkInDate }
+          }
+        ]
+      }
+    });
+
+    const bookedRoomIds = new Set(conflictingBookings.map(b => b.roomId));
+
+    const availableRooms = rooms.filter(room => 
+      !bookedRoomIds.has(room.id) && this.isRoomAvailable(room)
+    );
+
+    return {
+      checkInDate: checkIn,
+      checkOutDate: checkOut,
+      totalRooms: rooms.length,
+      availableRooms: availableRooms.length,
+      bookedRooms: bookedRoomIds.size,
+      bookingFee: this.BOOKING_FEE,
+      rooms: availableRooms.map(room => ({
+        id: room.id,
+        roomNumber: room.roomNumber,
+        floor: room.floor,
+        maxOccupancy: room.maxOccupancy,
+        currentOccupancy: room.currentOccupancy,
+        roomType: {
+          id: room.roomType.id,
+          name: room.roomType.name,
+          pricePerSemester: room.roomType.pricePerSemester,
+          pricePerMonth: room.roomType.pricePerMonth,
+          pricePerWeek: room.roomType.pricePerWeek,
+          capacity: room.roomType.capacity,
+          amenities: room.roomType.amenities
+        }
+      }))
+    };
   }
 
   /**
@@ -231,18 +288,12 @@ const {
    * Only called if user exists in database
    */
   private async validateSingleBookingConstraint(studentId: string): Promise<void> {
-    const activeBookingStatuses = [
-      BookingStatus.PENDING,
-      BookingStatus.CONFIRMED,
-      BookingStatus.CHECKED_IN
-    ];
-
-    const existingBooking = await this.bookingRepository.findOne({
+    const existingBooking = await this.prisma.booking.findFirst({
       where: {
         studentId,
-        status: In(activeBookingStatuses)
+        status: { in: [BookingStatus.pending, BookingStatus.confirmed, BookingStatus.checked_in] }
       },
-      relations: ['hostel', 'room']
+      include: { hostel: true, room: true }
     });
 
     if (existingBooking) {
@@ -260,60 +311,66 @@ const {
     };
 
     // Find bookings that are confirmed and past their auto-cancel deadline
-    const overdueBookings = await this.bookingRepository
-      .createQueryBuilder('booking')
-      .where('booking.status = :status', { status: BookingStatus.CONFIRMED })
-      .andWhere('booking.autoCancelAt IS NOT NULL')
-      .andWhere('booking.autoCancelAt < :now', { now: new Date() })
-      .andWhere('booking.autoCancelNotified = :notified', { notified: false })
-      .getMany();
+    const overdueBookings = await this.prisma.booking.findMany({
+      where: {
+        status: BookingStatus.confirmed,
+        autoCancelAt: { lt: new Date() },
+        autoCancelNotified: false
+      }
+    });
 
     for (const booking of overdueBookings) {
       try {
-        // Check if minimum payment requirement is met
-        if (!booking.hasMetMinPaymentRequirement()) {
+        // Since we removed TypeORM, we check payment manually
+        const minPaymentMet = Number(booking.amountPaid) >= Number(booking.bookingFee);
+        
+        if (!minPaymentMet) {
           // Auto-cancel the booking
-          await this.dataSource.transaction(async manager => {
+          await this.prisma.$transaction(async (tx) => {
             // Free up the room
-            const room = await manager.findOne(Room, { where: { id: booking.roomId } });
+            const room = await tx.room.findUnique({ where: { id: booking.roomId } });
             if (room) {
-              room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
-              if (room.currentOccupancy === 0) {
-                room.status = RoomStatus.AVAILABLE;
-              }
-              await manager.save(Room, room);
+              const newOccupancy = Math.max(0, room.currentOccupancy - 1);
+              const newStatus = newOccupancy === 0 ? 'AVAILABLE' : room.status;
+              await tx.room.update({
+                where: { id: room.id },
+                data: { currentOccupancy: newOccupancy, status: newStatus }
+              });
 
               // Update room type availability
-              const roomType = await manager.findOne(RoomType, { 
-                where: { id: room.roomTypeId } 
-              });
+              const roomType = await tx.roomType.findUnique({ where: { id: room.roomTypeId } });
               if (roomType) {
-                roomType.availableRooms = Math.min(
-                  roomType.totalRooms, 
-                  roomType.availableRooms + 1
-                );
-                await manager.save(RoomType, roomType);
+                await tx.roomType.update({
+                  where: { id: roomType.id },
+                  data: {
+                    availableRooms: Math.min(roomType.totalRooms, roomType.availableRooms + 1)
+                  }
+                });
               }
             }
 
             // Update booking status
-            booking.status = BookingStatus.CANCELLED;
-            booking.cancelledAt = new Date();
-            booking.cancellationReason = 'Automatically cancelled due to insufficient payment within 7 days';
-            booking.paymentStatus = PaymentStatus.CANCELLED;
-            booking.autoCancelNotified = true;
-
-            await manager.save(Booking, booking);
+            await tx.booking.update({
+              where: { id: booking.id },
+              data: {
+                status: BookingStatus.cancelled,
+                cancelledAt: new Date(),
+                cancellationReason: 'Automatically cancelled due to insufficient payment within 7 days',
+                paymentStatus: PaymentStatus.cancelled,
+                autoCancelNotified: true
+              }
+            });
           });
 
           result.cancelled.push(booking.id);
           console.log(`✅ Auto-cancelled booking ${booking.id} due to insufficient payment`);
         } else {
           // Mark as notified since requirement is met
-          booking.autoCancelNotified = true;
-          await this.bookingRepository.save(booking);
+          await this.prisma.booking.update({
+            where: { id: booking.id },
+            data: { autoCancelNotified: true }
+          });
         }
-
       } catch (error) {
         console.error(`❌ Failed to auto-cancel booking ${booking.id}:`, error);
       }
@@ -344,13 +401,13 @@ async getBookingPaymentOptions(bookingId: string, userId: string) {
   /**
    * Validates gender compatibility - only called if user exists
    */
-private async validateGenderCompatibility(user: User, room: Room & { roomType: RoomType }): Promise<void> {
-    if (!user.gender || user.gender === Gender.PREFER_NOT_TO_SAY) {
+  private async validateGenderCompatibility(user: any, room: any): Promise<void> {
+    if (!user.gender || user.gender === Gender.prefer_not_to_say) {
       return;
     }
 
-    const roomType = await this.roomTypeRepository.findOne({
-      where: { id: room.roomType.id }
+    const roomType = await this.prisma.roomType.findUnique({
+      where: { id: room.roomTypeId || room.roomType?.id }
     });
 
     if (!roomType) {
@@ -375,11 +432,11 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
   /**
    * Validates room gender mix - only called if user exists
    */
-  private async validateRoomGenderMix(user: User, room: Room): Promise<void> {
-    const currentBookings = await this.bookingRepository.find({
+  private async validateRoomGenderMix(user: any, room: any): Promise<void> {
+    const currentBookings = await this.prisma.booking.findMany({
       where: {
         roomId: room.id,
-        status: In([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN])
+        status: { in: [BookingStatus.confirmed, BookingStatus.checked_in] }
       }
     });
 
@@ -387,16 +444,16 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
       return;
     }
 
-    const currentOccupantIds = currentBookings.map(booking => booking.studentId);
-    const currentOccupants = await this.userRepository.find({
-      where: { id: In(currentOccupantIds) }
+    const currentOccupantIds = currentBookings.map(b => b.studentId).filter(Boolean) as string[];
+    const currentOccupants = await this.prisma.user.findMany({
+      where: { id: { in: currentOccupantIds } }
     });
 
     const currentGenders = currentOccupants
       .map(occupant => occupant.gender?.toLowerCase())
-      .filter(gender => gender && gender !== Gender.PREFER_NOT_TO_SAY.toLowerCase());
+      .filter(gender => gender && gender !== Gender.prefer_not_to_say.toLowerCase());
 
-    const roomType = room.roomType;
+    const roomType = room.roomType || await this.prisma.roomType.findUnique({ where: { id: room.roomTypeId } });
     if (!roomType.allowedGenders || 
         roomType.allowedGenders.includes('mixed') || 
         currentGenders.length === 0) {
@@ -404,7 +461,7 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
     }
 
     const userGender = user.gender?.toLowerCase();
-    if (userGender && userGender !== Gender.PREFER_NOT_TO_SAY.toLowerCase()) {
+    if (userGender && userGender !== Gender.prefer_not_to_say.toLowerCase()) {
       const existingGender = currentGenders[0];
       if (existingGender && userGender !== existingGender) {
         throw new BadRequestException(
@@ -418,7 +475,7 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
    * Calculate booking amount based on room type and booking duration
    */
   private async calculateBookingAmount(
-    roomType: RoomType, 
+    roomType: any, 
     bookingType: BookingType, 
     checkIn: Date, 
     checkOut: Date
@@ -426,22 +483,22 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
     const duration = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
     
     switch (bookingType) {
-      case BookingType.SEMESTER:
-        return roomType.pricePerSemester;
-      case BookingType.MONTHLY:
+      case BookingType.semester:
+        return Number(roomType.pricePerSemester);
+      case BookingType.monthly:
         const months = Math.ceil(duration / 30);
-        return roomType.pricePerMonth * months;
-      case BookingType.WEEKLY:
+        return Number(roomType.pricePerMonth) * months;
+      case BookingType.weekly:
         const weeks = Math.ceil(duration / 7);
         return roomType.pricePerWeek ? 
-          roomType.pricePerWeek * weeks : 
-          roomType.pricePerMonth * weeks / 4;
+          Number(roomType.pricePerWeek) * weeks : 
+          Number(roomType.pricePerMonth) * weeks / 4;
       default:
         throw new BadRequestException('Invalid booking type');
     }
   }
 
-  async createBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
+  async createBooking(createBookingDto: CreateBookingDto): Promise<any> {
     const { 
       hostelId, 
       roomId, 
@@ -471,7 +528,7 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
     }
 
     // Get user information
-    const user = await this.userRepository.findOne({ where: { id: studentId } });
+    const user = await this.prisma.user.findUnique({ where: { id: studentId } });
     if (!user) {
       throw new NotFoundException(`User with ID ${studentId} not found`);
     }
@@ -480,17 +537,17 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
     await this.validateSingleBookingConstraint(studentId);
 
     // Verify hostel exists
-    const hostel = await this.hostelRepository.findOne({ where: { id: hostelId } });
+    const hostel = await this.prisma.hostel.findUnique({ where: { id: hostelId } });
     if (!hostel) {
       throw new NotFoundException(`Hostel with ID ${hostelId} not found`);
     }
 
     // Verify room exists and belongs to the hostel
-    const room = await this.roomRepository.findOne({
-      where: { id: roomId, hostelId },
-      relations: ['roomType']
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      include: { roomType: true }
     });
-    if (!room) {
+    if (!room || room.hostelId !== hostelId) {
       throw new NotFoundException(`Room with ID ${roomId} not found in this hostel`);
     }
 
@@ -498,7 +555,7 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
     await this.validateGenderCompatibility(user, room);
 
     // Check if room is available
-    if (!room.isAvailable()) {
+    if (room.status?.toUpperCase() !== 'AVAILABLE' || room.currentOccupancy >= room.maxOccupancy) {
       throw new ConflictException('Room is not available for booking');
     }
 
@@ -517,11 +574,12 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
     }
 
     // Check for conflicting bookings
-    const conflictingBookings = await this.bookingRepository.find({
+    const conflictingBookings = await this.prisma.booking.findMany({
       where: {
         roomId,
-        status: In([BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]),
-        checkInDate: Between(checkIn, checkOut),
+        status: { in: [BookingStatus.pending, BookingStatus.confirmed, BookingStatus.checked_in] },
+        checkInDate: { lte: checkOut },
+        checkOutDate: { gte: checkIn }
       }
     });
 
@@ -537,64 +595,74 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
     paymentDueDate.setDate(paymentDueDate.getDate() - 7);
 
     // Use transaction to ensure atomicity
-    return await this.dataSource.transaction(async manager => {
-      // Create booking with CONFIRMED status since payment is verified
-      const booking = manager.create(Booking, {
-        hostelId,
-        roomId,
-        studentId,
-        checkInDate: checkIn,
-        checkOutDate: checkOut,
-        bookingType,
-        totalAmount: totalRoomAmount,
-        amountPaid: this.BOOKING_FEE, // Booking fee is already paid
-        amountDue: totalRoomAmount, // Room amount still due
-        paymentDueDate,
-        status: BookingStatus.CONFIRMED, // Automatically confirm since payment is verified
-        paymentStatus: PaymentStatus.PARTIAL, // Partial because only booking fee is paid
-        confirmedAt: new Date(),
-        ...bookingData
+    return await this.prisma.$transaction(async (tx) => {
+      // Create booking with confirmed status since payment is verified
+      const booking = await tx.booking.create({
+        data: {
+          hostelId,
+          roomId,
+          studentId,
+          checkInDate: checkIn,
+          checkOutDate: checkOut,
+          bookingType,
+          totalAmount: totalRoomAmount,
+          amountPaid: this.BOOKING_FEE, // Booking fee is already paid
+          amountDue: totalRoomAmount, // Room amount still due
+          paymentDueDate,
+          status: BookingStatus.confirmed, // Automatically confirm since payment is verified
+          paymentStatus: PaymentStatus.partial, // Partial because only booking fee is paid
+          confirmedAt: new Date(),
+          bookingFee: this.BOOKING_FEE,
+          bookingFeePaid: true,
+          paymentReference: paymentReference,
+          bookingFeePaidAt: new Date(paymentVerification.paidAt),
+          studentName: bookingData.studentName || user.name || 'Unknown',
+          studentEmail: bookingData.studentEmail || user.email,
+          studentPhone: bookingData.studentPhone || user.phone || '0000000000',
+          emergencyContacts: bookingData.emergencyContacts ? (bookingData.emergencyContacts as any) : [],
+          specialRequests: bookingData.specialRequests,
+          notes: bookingData.notes,
+          depositAmount: depositAmount,
+          autoCancelAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+        }
       });
-
-      const savedBooking = await manager.save(Booking, booking);
-
-       savedBooking.setAutoCancelDeadline();
-      await manager.save(Booking, savedBooking);
 
       // Create payment record for the booking fee
-      const payment = manager.create(Payment, {
-        bookingId: savedBooking.id,
-        amount: this.BOOKING_FEE,
-        paymentMethod: PaymentMethod.CARD, // Assuming card payment via Paystack
-        paymentType: PaymentType.BOOKING_PAYMENT,
-        transactionRef: paymentReference,
-        notes: 'Booking fee payment via Paystack',
-        status: 'completed',
-        paymentDate: new Date(paymentVerification.paidAt)
+      await tx.payment.create({
+        data: {
+          bookingId: booking.id,
+          amount: this.BOOKING_FEE,
+          paymentMethod: PaymentMethod.card, // Assuming card payment via Paystack
+          paymentType: PaymentType.booking_payment,
+          transactionRef: paymentReference,
+          notes: 'Booking fee payment via Paystack',
+          metadata: null as any,
+          paymentDate: new Date(paymentVerification.paidAt)
+        }
       });
 
-      await manager.save(Payment, payment);
-
       // Update room occupancy
-      room.currentOccupancy += 1;
-      if (room.currentOccupancy >= room.maxOccupancy) {
-        room.status = RoomStatus.OCCUPIED;
-      }
-      await manager.save(Room, room);
+      const newOccupancy = room.currentOccupancy + 1;
+      const newStatus = newOccupancy >= room.maxOccupancy ? 'OCCUPIED' : room.status;
+      await tx.room.update({
+        where: { id: room.id },
+        data: { currentOccupancy: newOccupancy, status: newStatus }
+      });
 
       // Update room type availability
-      const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
-      if (roomType && roomType.availableRooms > 0) {
-        roomType.availableRooms -= 1;
-        await manager.save(RoomType, roomType);
+      if (room.roomType && room.roomType.availableRooms > 0) {
+        await tx.roomType.update({
+          where: { id: room.roomTypeId },
+          data: { availableRooms: { decrement: 1 } }
+        });
       }
 
       // Double-check if room is already booked
-      const existingBooking = await manager.findOne(Booking, {
+      const existingBooking = await tx.booking.findFirst({
         where: {
           roomId,
-          id: Not(savedBooking.id),
-          status: In([BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]),
+          id: { not: booking.id },
+          status: { in: [BookingStatus.pending, BookingStatus.confirmed, BookingStatus.checked_in] }
         }
       });
 
@@ -602,25 +670,26 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
         throw new ConflictException('Room was just booked by another user!');
       }
 
-      return savedBooking;
+      return booking;
     });
   }
 
   /**
    * Record additional payment for booking (room balance)
    */
-  async recordRoomPayment(bookingId: string, paymentDto: PaymentDto, receivedBy?: string): Promise<{ payment: Payment; booking: Booking }> {
-    return await this.dataSource.transaction(async manager => {
-      const booking = await manager.findOne(Booking, {
-        where: { id: bookingId },
-        lock: { mode: 'pessimistic_write' }
+  async recordRoomPayment(bookingId: string, paymentDto: PaymentDto, receivedBy?: string): Promise<{ payment: any; booking: any }> {
+    return await this.prisma.$transaction(async (tx) => {
+      // Prisma does not have pessimistic locking natively without raw queries, 
+      // but findUnique/update in a transaction ensures atomic state
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId }
       });
 
       if (!booking) {
         throw new NotFoundException(`Booking with ID ${bookingId} not found`);
       }
 
-      if (booking.status === BookingStatus.CANCELLED) {
+      if (booking.status === BookingStatus.cancelled) {
         throw new BadRequestException('Cannot record payment for cancelled booking');
       }
 
@@ -635,38 +704,45 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
       }
 
       // Create payment record
-      const payment = manager.create(Payment, {
-        bookingId,
-        amount: paymentAmount,
-        paymentMethod: paymentDto.paymentMethod as PaymentMethod,
-        paymentType: PaymentType.BOOKING_PAYMENT,
-        transactionRef: paymentDto.transactionRef,
-        notes: paymentDto.notes,
-        receivedBy,
-        status: 'completed'
+      const payment = await tx.payment.create({
+        data: {
+          bookingId,
+          amount: paymentAmount,
+          paymentMethod: paymentDto.paymentMethod as PaymentMethod,
+          paymentType: PaymentType.booking_payment,
+          transactionRef: paymentDto.transactionRef,
+          notes: paymentDto.notes,
+          receivedBy,
+          metadata: null as any,
+          paymentDate: new Date()
+        }
       });
-
-      const savedPayment = await manager.save(Payment, payment);
 
       // Update booking payment status
       const currentAmountPaid = Number(booking.amountPaid) || 0;
       const totalAmount = Number(booking.totalAmount);
       
-      booking.amountPaid = currentAmountPaid + paymentAmount;
-      booking.amountDue = totalAmount - booking.amountPaid;
+      const newAmountPaid = currentAmountPaid + paymentAmount;
+      const newAmountDue = totalAmount - newAmountPaid;
 
-      // Update payment status
-      if (booking.amountDue <= 0) {
-        booking.paymentStatus = PaymentStatus.PAID;
-        booking.amountDue = 0;
-      } else if (booking.amountPaid > 0) {
-        booking.paymentStatus = PaymentStatus.PARTIAL;
+      let newPaymentStatus = booking.paymentStatus;
+      if (newAmountDue <= 0) {
+        newPaymentStatus = PaymentStatus.paid;
+      } else if (newAmountPaid > 0) {
+        newPaymentStatus = PaymentStatus.partial;
       }
 
-      const updatedBooking = await manager.save(Booking, booking);
+      const updatedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          amountPaid: newAmountPaid,
+          amountDue: newAmountDue <= 0 ? 0 : newAmountDue,
+          paymentStatus: newPaymentStatus
+        }
+      });
 
       return { 
-        payment: savedPayment, 
+        payment, 
         booking: updatedBooking 
       };
     });
@@ -677,7 +753,7 @@ private async validateGenderCompatibility(user: User, room: Room & { roomType: R
 async createBookingWithDeposit(
   createBookingDto: CreateBookingDto,
   userId: string
-): Promise<Booking> {
+): Promise<any> {
   const { 
     hostelId, roomId, checkInDate, checkOutDate, 
     bookingType, emergencyContacts, depositAmount = 70,
@@ -686,10 +762,10 @@ async createBookingWithDeposit(
 
   console.log('🔒 Starting booking with deposit deduction for user:', userId);
 
-  // Use a database transaction to ensure atomicity
-  return await this.dataSource.transaction(async manager => {
+  // Prisma interactive transaction to ensure atomicity
+  return await this.prisma.$transaction(async (tx) => {
     try {
-      // Step 1: Lock and verify deposit balance
+      // Step 1: Verify deposit balance
       console.log('💰 Checking deposit balance...');
       const depositBalance = await this.depositsService.getUserDepositBalance(userId);
       
@@ -700,26 +776,22 @@ async createBookingWithDeposit(
         );
       }
 
-      // Step 2: Get and lock the user (without relations)
-      const user = await manager
-        .createQueryBuilder(User, 'user')
-        .where('user.id = :userId', { userId })
-        .setLock('pessimistic_write')
-        .getOne();
+      // Step 2: Get user
+      const user = await tx.user.findUnique({
+        where: { id: userId }
+      });
 
       if (!user) {
         throw new NotFoundException('User not found');
       }
 
-      // Step 3: Validate single booking constraint (with lock, without relations)
-      const existingBooking = await manager
-        .createQueryBuilder(Booking, 'booking')
-        .where('booking.studentId = :userId', { userId })
-        .andWhere('booking.status IN (:...statuses)', {
-          statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]
-        })
-        .setLock('pessimistic_write')
-        .getOne();
+      // Step 3: Validate single booking constraint
+      const existingBooking = await tx.booking.findFirst({
+        where: {
+          studentId: userId,
+          status: { in: [BookingStatus.pending, BookingStatus.confirmed, BookingStatus.checked_in] }
+        }
+      });
 
       if (existingBooking) {
         throw new ConflictException(
@@ -727,29 +799,23 @@ async createBookingWithDeposit(
         );
       }
 
-      // Step 4: Get and lock the room WITHOUT relations first
+      // Step 4: Validate room availability
       console.log('🔐 Locking room for availability check...');
-      const room = await manager
-        .createQueryBuilder(Room, 'room')
-        .where('room.id = :roomId AND room.hostelId = :hostelId', { roomId, hostelId })
-        .setLock('pessimistic_write')
-        .getOne();
+      const room = await tx.room.findUnique({
+        where: { id: roomId },
+        include: { roomType: true } // We need roomType for calculations and gender checks
+      });
 
-      if (!room) {
-        throw new NotFoundException('Room not found');
+      if (!room || room.hostelId !== hostelId) {
+        throw new NotFoundException('Room not found in this hostel');
       }
 
-      // Step 5: Now get the room type separately (without locking)
-      const roomType = await manager
-        .createQueryBuilder(RoomType, 'roomType')
-        .where('roomType.id = :roomTypeId', { roomTypeId: room.roomTypeId })
-        .getOne();
-
+      const roomType = room.roomType;
       if (!roomType) {
         throw new NotFoundException('Room type not found');
       }
 
-      // Step 6: CRITICAL - Verify room availability with locked data
+      // Step 6: Verify room availability
       if (!this.isRoomAvailable(room)) {
         throw new ConflictException('Room is not available for booking');
       }
@@ -759,7 +825,7 @@ async createBookingWithDeposit(
       }
 
       // Step 7: Validate gender compatibility
-      await this.validateGenderCompatibility(user, { ...room, roomType } as Room & { roomType: RoomType });
+      await this.validateGenderCompatibility(user, room);
 
       // Step 8: Validate dates
       const checkIn = new Date(checkInDate);
@@ -775,19 +841,15 @@ async createBookingWithDeposit(
         throw new BadRequestException('Check-out date must be after check-in date');
       }
 
-      // Step 9: Check for conflicting bookings (with lock, without relations)
-      const conflictingBooking = await manager
-        .createQueryBuilder(Booking, 'booking')
-        .where('booking.roomId = :roomId', { roomId })
-        .andWhere('booking.status IN (:...statuses)', {
-          statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]
-        })
-        .andWhere(
-          '(booking.checkInDate <= :checkOut AND booking.checkOutDate >= :checkIn)',
-          { checkIn, checkOut }
-        )
-        .setLock('pessimistic_write')
-        .getOne();
+      // Step 9: Check for conflicting bookings
+      const conflictingBooking = await tx.booking.findFirst({
+        where: {
+          roomId,
+          status: { in: [BookingStatus.pending, BookingStatus.confirmed, BookingStatus.checked_in] },
+          checkInDate: { lte: checkOut },
+          checkOutDate: { gte: checkIn }
+        }
+      });
 
       if (conflictingBooking) {
         throw new ConflictException('Room is already booked for these dates');
@@ -804,81 +866,88 @@ async createBookingWithDeposit(
       const paymentDueDate = new Date(checkIn);
       paymentDueDate.setDate(paymentDueDate.getDate() - 7);
 
+      const paymentRef = `booking_fee_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
       // Step 11: Create deposit deduction record
       console.log('💸 Creating deposit deduction record...');
-      const depositDeduction = manager.create(Deposit, {
-        userId,
-        amount: -depositAmount,
-        status: DepositStatus.COMPLETED,
-        depositType: DepositType.BOOKING_DEPOSIT,
-        paymentReference: `booking_fee_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        notes: `Booking fee deduction`,
-        paymentDate: new Date(),
-        verifiedAt: new Date()
+      const depositDeduction = await tx.deposit.create({
+        data: {
+          userId,
+          amount: -depositAmount,
+          status: DepositStatus.completed,
+          depositType: DepositType.booking_deposit,
+          paymentReference: paymentRef,
+          notes: `Booking fee deduction`,
+          paymentDate: new Date(),
+          verifiedAt: new Date()
+        }
       });
-
-      await manager.save(Deposit, depositDeduction);
 
       // Step 12: Create booking
       console.log('📝 Creating booking record...');
-      const booking = manager.create(Booking, {
-        hostelId,
-        roomId,
-        studentId: userId,
-        studentName: user.name || bookingData.studentName,
-        studentEmail: user.email || bookingData.studentEmail,
-        studentPhone: user.phone || bookingData.studentPhone,
-        checkInDate: checkIn,
-        checkOutDate: checkOut,
-        bookingType,
-        totalAmount: totalRoomAmount,
-        amountPaid: depositAmount,
-        amountDue: totalRoomAmount,
-        paymentDueDate,
-        status: BookingStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PARTIAL,
-        confirmedAt: new Date(),
-        bookingFee: depositAmount,
-        bookingFeePaid: true,
-        paymentReference: depositDeduction.paymentReference,
-        bookingFeePaidAt: new Date(),
-        emergencyContacts: emergencyContacts || []
+      const booking = await tx.booking.create({
+        data: {
+          hostelId,
+          roomId,
+          studentId: userId,
+          studentName: user.name || bookingData.studentName || 'Unknown',
+          studentEmail: user.email || bookingData.studentEmail,
+          studentPhone: user.phone || bookingData.studentPhone || '0000000000',
+          checkInDate: checkIn,
+          checkOutDate: checkOut,
+          bookingType,
+          totalAmount: totalRoomAmount,
+          amountPaid: depositAmount,
+          amountDue: totalRoomAmount,
+          paymentDueDate,
+          status: BookingStatus.confirmed,
+          paymentStatus: PaymentStatus.partial,
+          confirmedAt: new Date(),
+          bookingFee: depositAmount,
+          bookingFeePaid: true,
+          paymentReference: paymentRef,
+          bookingFeePaidAt: new Date(),
+          emergencyContacts: emergencyContacts ? (emergencyContacts as any) : null as any,
+          specialRequests: bookingData.specialRequests,
+          notes: bookingData.notes
+        }
       });
-
-      const savedBooking = await manager.save(Booking, booking);
 
       // Step 13: Create payment record
-      const payment = manager.create(Payment, {
-        bookingId: savedBooking.id,
-        amount: depositAmount,
-        paymentMethod: PaymentMethod.ACCOUNT_CREDIT,
-        paymentType: PaymentType.BOOKING_PAYMENT,
-        transactionRef: depositDeduction.paymentReference,
-        notes: 'Booking fee from deposit balance',
-        status: 'completed',
-        paymentDate: new Date()
+      await tx.payment.create({
+        data: {
+          bookingId: booking.id,
+          amount: depositAmount,
+          paymentMethod: PaymentMethod.account_credit,
+          paymentType: PaymentType.booking_payment,
+          transactionRef: paymentRef,
+          notes: 'Booking fee from deposit balance',
+          metadata: null as any,
+          paymentDate: new Date()
+        }
       });
-
-      await manager.save(Payment, payment);
 
       // Step 14: Update room occupancy
       console.log('🏠 Updating room occupancy...');
-      room.currentOccupancy += 1;
-      if (room.currentOccupancy >= room.maxOccupancy) {
-        room.status = RoomStatus.OCCUPIED;
-      }
-      await manager.save(Room, room);
+      const newOccupancy = room.currentOccupancy + 1;
+      const newStatus = newOccupancy >= room.maxOccupancy ? 'OCCUPIED' : room.status;
+      await tx.room.update({
+        where: { id: room.id },
+        data: { currentOccupancy: newOccupancy, status: newStatus }
+      });
 
-      // Step 15: Update room type availability (without locking)
+      // Step 15: Update room type availability
       if (roomType && roomType.availableRooms > 0) {
-        roomType.availableRooms -= 1;
-        await manager.save(RoomType, roomType);
+        await tx.roomType.update({
+          where: { id: roomType.id },
+          data: { availableRooms: { decrement: 1 } }
+        });
       }
 
-      console.log('✅ Booking created successfully:', savedBooking.id);
+      console.log('✅ Booking created successfully:', booking.id);
       console.log('💵 Deposit deducted:', depositAmount);
 
-      return savedBooking;
+      return booking;
 
     } catch (error) {
       console.error('❌ Booking creation failed:', error);
@@ -888,121 +957,130 @@ async createBookingWithDeposit(
 }
 
 // Add this helper method to check room availability
-private isRoomAvailable(room: Room): boolean {
-  return room.status === RoomStatus.AVAILABLE && 
+private isRoomAvailable(room: any): boolean {
+  return room.status?.toUpperCase() === 'AVAILABLE' && 
          room.currentOccupancy < room.maxOccupancy;
 }
 
-async getBookings(filterDto: BookingFilterDto) {
-  const {
-    hostelId,
-    roomId,
-    studentId,
-    status,
-    bookingType,
-    paymentStatus,
-    checkInFrom,
-    checkInTo,
-    search,
-    page = 1,
-    limit = 10,
-    sortBy = 'createdAt',
-    sortOrder = 'DESC',
-    excludeStatuses = []
-  } = filterDto;
-
-  const queryBuilder = this.bookingRepository
-    .createQueryBuilder('booking')
-    .leftJoinAndSelect('booking.hostel', 'hostel')
-    .leftJoinAndSelect('booking.room', 'room')
-    .leftJoinAndSelect('room.roomType', 'roomType');
-
-  // Apply filters
-  if (hostelId) {
-    queryBuilder.andWhere('booking.hostelId = :hostelId', { hostelId });
-  }
-
-  if (roomId) {
-    queryBuilder.andWhere('booking.roomId = :roomId', { roomId });
-  }
-
-  if (studentId) {
-    queryBuilder.andWhere('booking.studentId = :studentId', { studentId });
-  }
-
-  // Fixed: Handle status filtering correctly
-  if (status) {
-    const statuses = Array.isArray(status) ? status : [status];
-    queryBuilder.andWhere('booking.status IN (:...statuses)', { statuses });
-  }
-
-  // Handle excludeStatuses (useful for filtering out active bookings)
-  if (excludeStatuses && excludeStatuses.length > 0) {
-    queryBuilder.andWhere('booking.status NOT IN (:...excludeStatuses)', {
-      excludeStatuses
-    });
-  }
-
-  if (bookingType) {
-    queryBuilder.andWhere('booking.bookingType = :bookingType', { bookingType });
-  }
-
-  if (paymentStatus) {
-    queryBuilder.andWhere('booking.paymentStatus = :paymentStatus', { paymentStatus });
-  }
-
-  if (checkInFrom && checkInTo) {
-    queryBuilder.andWhere('booking.checkInDate BETWEEN :checkInFrom AND :checkInTo', {
+  async getBookings(filterDto: BookingFilterDto) {
+    const {
+      hostelId,
+      roomId,
+      studentId,
+      status,
+      bookingType,
+      paymentStatus,
       checkInFrom,
-      checkInTo
-    });
-  } else if (checkInFrom) {
-    queryBuilder.andWhere('booking.checkInDate >= :checkInFrom', { checkInFrom });
-  } else if (checkInTo) {
-    queryBuilder.andWhere('booking.checkInDate <= :checkInTo', { checkInTo });
-  }
+      checkInTo,
+      search,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      excludeStatuses
+    } = filterDto;
 
-  if (search) {
-    queryBuilder.andWhere(
-      '(booking.studentName ILIKE :search OR booking.studentEmail ILIKE :search OR booking.studentPhone ILIKE :search OR room.roomNumber ILIKE :search OR hostel.name ILIKE :search)',
-      { search: `%${search}%` }
-    );
-  }
+    try {
+      const where: Prisma.BookingWhereInput = {};
 
-  // Apply sorting
-  queryBuilder.orderBy(`booking.${sortBy}`, sortOrder);
+      if (hostelId) where.hostelId = hostelId;
+      if (roomId) where.roomId = roomId;
+      if (studentId) where.studentId = studentId;
+      if (status) where.status = status;
+      if (bookingType) where.bookingType = bookingType;
+      if (paymentStatus) where.paymentStatus = paymentStatus;
 
-  // Apply pagination
-  const offset = (page - 1) * limit;
-  queryBuilder.skip(offset).take(limit);
-
-  try {
-    const [bookings, total] = await queryBuilder.getManyAndCount();
-
-    return {
-      bookings,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
+      if (checkInFrom || checkInTo) {
+        where.checkInDate = {};
+        if (checkInFrom) where.checkInDate.gte = new Date(checkInFrom);
+        if (checkInTo) where.checkInDate.lte = new Date(checkInTo);
       }
-    };
-  } catch (error) {
-    console.error('Error in getBookings:', error);
-    throw new Error(`Failed to fetch bookings: ${error.message}`);
-  }
-}
 
-  async getBookingById(id: string): Promise<Booking> {
-    const booking = await this.bookingRepository
-      .createQueryBuilder('booking')
-      .leftJoinAndSelect('booking.hostel', 'hostel')
-      .leftJoinAndSelect('booking.room', 'room')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .leftJoinAndSelect('booking.payments', 'payments')
-      .where('booking.id = :id', { id })
-      .getOne();
+      if (excludeStatuses && excludeStatuses.length > 0) {
+        where.status = { 
+          notIn: excludeStatuses as BookingStatus[],
+        };
+        if (status) {
+          where.status = {
+            in: [status],
+            notIn: excludeStatuses as BookingStatus[]
+          };
+        }
+      }
+
+      if (search) {
+        where.OR = [
+          { studentName: { contains: search, mode: 'insensitive' } },
+          { studentEmail: { contains: search, mode: 'insensitive' } },
+          { studentPhone: { contains: search, mode: 'insensitive' } },
+        ];
+      }
+
+      // Convert sortOrder to Prisma sort order
+      const prismaSortOrder: Prisma.SortOrder = sortOrder.toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+      const [total, bookings] = await Promise.all([
+        this.prisma.booking.count({ where }),
+        this.prisma.booking.findMany({
+          where,
+          include: {
+            hostel: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                address: true,
+                images: true,
+                isVerified: true,
+                isActive: true,
+                createdAt: true,
+                adminId: true,
+                updatedAt: true
+              }
+            },
+            room: {
+              include: { roomType: true }
+            },
+            student: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true
+              }
+            }
+          },
+          orderBy: { [sortBy]: prismaSortOrder },
+          skip: (page - 1) * limit,
+          take: limit,
+        })
+      ]);
+
+      return {
+        bookings,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } catch (error) {
+      console.error('Error in getBookings:', error);
+      throw new BadRequestException(`Failed to fetch bookings: ${(error as Error).message}`);
+    }
+  }
+
+  async getBookingById(id: string): Promise<any> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      include: {
+        hostel: true,
+        room: { include: { roomType: true } },
+        payments: true
+      }
+    });
 
     if (!booking) {
       throw new NotFoundException(`Booking with ID ${id} not found`);
@@ -1012,13 +1090,15 @@ async getBookings(filterDto: BookingFilterDto) {
   }
 
   // Update booking
-  async updateBooking(id: string, updateBookingDto: UpdateBookingDto): Promise<Booking> {
+  async updateBooking(id: string, updateBookingDto: UpdateBookingDto): Promise<any> {
     const booking = await this.getBookingById(id);
 
     // Check if booking can be updated
-    if ([BookingStatus.CHECKED_OUT, BookingStatus.CANCELLED].includes(booking.status)) {
+    if ([BookingStatus.checked_out, BookingStatus.cancelled].includes(booking.status as any)) {
       throw new BadRequestException('Cannot update completed or cancelled booking');
     }
+
+    const updates: any = { ...updateBookingDto };
 
     // If dates are being updated, validate and check for conflicts
     if (updateBookingDto.checkInDate || updateBookingDto.checkOutDate) {
@@ -1030,12 +1110,13 @@ async getBookings(filterDto: BookingFilterDto) {
       }
 
       // Check for conflicts with other bookings
-      const conflictingBookings = await this.bookingRepository.find({
+      const conflictingBookings = await this.prisma.booking.findMany({
         where: {
           roomId: booking.roomId,
-          id: Not(booking.id),
-          status: In([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN]),
-          checkInDate: Between(newCheckIn, newCheckOut),
+          id: { not: booking.id },
+          status: { in: [BookingStatus.confirmed, BookingStatus.checked_in] },
+          checkInDate: { lte: newCheckOut },
+          checkOutDate: { gte: newCheckIn }
         }
       });
 
@@ -1045,9 +1126,9 @@ async getBookings(filterDto: BookingFilterDto) {
 
       // Recalculate total amount if dates changed
       if (updateBookingDto.checkInDate || updateBookingDto.checkOutDate) {
-        const room = await this.roomRepository.findOne({
+        const room = await this.prisma.room.findUnique({
           where: { id: booking.roomId },
-          relations: ['roomType']
+          include: { roomType: true }
         });
 
         if (!room) {
@@ -1056,147 +1137,182 @@ async getBookings(filterDto: BookingFilterDto) {
         
         const newTotalAmount = await this.calculateBookingAmount(
           room.roomType, 
-          booking.bookingType, 
+          booking.bookingType as BookingType, 
           newCheckIn, 
           newCheckOut
         );
         
-        booking.totalAmount = newTotalAmount;
-        booking.amountDue = newTotalAmount - booking.amountPaid;
+        updates.totalAmount = newTotalAmount;
+        updates.amountDue = newTotalAmount - Number(booking.amountPaid);
       }
     }
 
-    Object.assign(booking, updateBookingDto);
-    return await this.bookingRepository.save(booking);
+    if (updates.emergencyContacts) {
+      updates.emergencyContacts = updates.emergencyContacts as any;
+    }
+
+    return await this.prisma.booking.update({
+      where: { id },
+      data: updates
+    });
   }
 
   // Confirm booking
-  async confirmBooking(id: string, confirmDto: ConfirmBookingDto): Promise<Booking> {
+  async confirmBooking(id: string, confirmDto: ConfirmBookingDto): Promise<any> {
     const booking = await this.getBookingById(id);
 
-    if (booking.status !== BookingStatus.PENDING) {
+    if (booking.status !== BookingStatus.pending) {
       throw new BadRequestException('Only pending bookings can be confirmed');
     }
 
-    booking.status = BookingStatus.CONFIRMED;
-    booking.confirmedAt = new Date();
-    if (confirmDto.notes) {
-      booking.notes = booking.notes ? `${booking.notes}\n${confirmDto.notes}` : confirmDto.notes;
-    }
+    const notes = confirmDto.notes ? 
+      (booking.notes ? `${booking.notes}\n${confirmDto.notes}` : confirmDto.notes) : 
+      booking.notes;
 
-    return await this.bookingRepository.save(booking);
+    return await this.prisma.booking.update({
+      where: { id },
+      data: {
+        status: BookingStatus.confirmed,
+        confirmedAt: new Date(),
+        notes
+      }
+    });
   }
 
-  async cancelBooking(id: string, cancelDto: CancelBookingDto): Promise<Booking> {
+  async cancelBooking(id: string, cancelDto: CancelBookingDto): Promise<any> {
     const booking = await this.getBookingById(id);
 
-    if (!booking.canCancel()) {
+    if (booking.status === BookingStatus.cancelled || booking.status === BookingStatus.checked_out) {
       throw new BadRequestException('Booking cannot be cancelled');
     }
 
     // Use transaction to ensure atomicity
-    return await this.dataSource.transaction(async manager => {
+    return await this.prisma.$transaction(async (tx) => {
       // Free up the room
-      const room = await manager.findOne(Room, { where: { id: booking.roomId } });
+      const room = await tx.room.findUnique({ where: { id: booking.roomId } });
       if (room) {
-        room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
-        if (room.currentOccupancy === 0) {
-          room.status = RoomStatus.AVAILABLE;
-        }
-        await manager.save(Room, room);
+        const newOccupancy = Math.max(0, room.currentOccupancy - 1);
+        const newStatus = newOccupancy === 0 ? 'AVAILABLE' : room.status;
+        await tx.room.update({
+          where: { id: room.id },
+          data: { currentOccupancy: newOccupancy, status: newStatus }
+        });
 
         // Update room type availability
-        const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+        const roomType = await tx.roomType.findUnique({ where: { id: room.roomTypeId } });
         if (roomType) {
-          roomType.availableRooms = Math.min(roomType.totalRooms, roomType.availableRooms + 1);
-          await manager.save(RoomType, roomType);
+          await tx.roomType.update({
+            where: { id: roomType.id },
+            data: { availableRooms: Math.min(roomType.totalRooms, roomType.availableRooms + 1) }
+          });
         }
       }
 
-      booking.status = BookingStatus.CANCELLED;
-      booking.cancelledAt = new Date();
-      booking.cancellationReason = cancelDto.reason;
-      if (cancelDto.notes) {
-        booking.notes = booking.notes ? `${booking.notes}\n${cancelDto.notes}` : cancelDto.notes;
-      }
+      const notes = cancelDto.notes ? 
+        (booking.notes ? `${booking.notes}\n${cancelDto.notes}` : cancelDto.notes) : 
+        booking.notes;
 
       // Handle refund for booking fee if cancellation is within policy
       const daysSinceBooking = Math.ceil((new Date().getTime() - booking.createdAt.getTime()) / (1000 * 60 * 60 * 24));
+      let paymentStatus = booking.paymentStatus;
       if (daysSinceBooking <= 7) { // Allow refund within 7 days
-        booking.paymentStatus = PaymentStatus.CANCELLED;
-        // Note: You would implement actual refund logic with Paystack here
+        paymentStatus = PaymentStatus.cancelled;
       } else {
-        booking.paymentStatus = PaymentStatus.PAID; // Keep booking fee as non-refundable
+        paymentStatus = PaymentStatus.paid; // Keep booking fee as non-refundable
       }
 
-      return await manager.save(Booking, booking);
+      return await tx.booking.update({
+        where: { id },
+        data: {
+          status: BookingStatus.cancelled,
+          cancelledAt: new Date(),
+          cancellationReason: cancelDto.reason,
+          notes,
+          paymentStatus
+        }
+      });
     });
   }
 
   // Check in student - now requires full payment
-  async checkIn(id: string, checkInDto: CheckInDto): Promise<Booking> {
+  async checkIn(id: string, checkInDto: CheckInDto): Promise<any> {
     const booking = await this.getBookingById(id);
 
-    if (!booking.canCheckIn()) {
+    if (booking.status !== BookingStatus.confirmed) {
       throw new BadRequestException('Booking cannot be checked in');
     }
 
     // Verify full payment is complete (booking fee + room amount)
-    if (booking.paymentStatus !== PaymentStatus.PAID || booking.amountDue > 0) {
+    if (booking.paymentStatus !== PaymentStatus.paid || Number(booking.amountDue) > 0) {
       throw new BadRequestException(
-        `Full payment of ${this.paystackService.formatAmount(Number(booking.totalAmount) + this.BOOKING_FEE)} must be completed before check-in. Remaining balance: ${this.paystackService.formatAmount(Number(booking.amountDue))}`
+        `Full payment of ${this.paystackService.formatAmount(Number(booking.totalAmount) + Number(this.BOOKING_FEE))} must be completed before check-in. Remaining balance: ${this.paystackService.formatAmount(Number(booking.amountDue))}`
       );
     }
 
-    booking.status = BookingStatus.CHECKED_IN;
-    booking.checkedInAt = new Date();
-    if (checkInDto.notes) {
-      booking.notes = booking.notes ? `${booking.notes}\n${checkInDto.notes}` : checkInDto.notes;
-    }
+    const notes = checkInDto.notes ? 
+      (booking.notes ? `${booking.notes}\n${checkInDto.notes}` : checkInDto.notes) : 
+      booking.notes;
 
     // Update room status
-    const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-    if (room && room.status === RoomStatus.AVAILABLE) {
-      room.status = RoomStatus.OCCUPIED;
-      await this.roomRepository.save(room);
+    const room = await this.prisma.room.findUnique({ where: { id: booking.roomId } });
+    if (room && room.status?.toUpperCase() === 'AVAILABLE') {
+      await this.prisma.room.update({
+        where: { id: room.id },
+        data: { status: 'OCCUPIED' }
+      });
     }
 
-    return await this.bookingRepository.save(booking);
+    return await this.prisma.booking.update({
+      where: { id },
+      data: {
+        status: BookingStatus.checked_in,
+        checkedInAt: new Date(),
+        notes
+      }
+    });
   }
 
-  async checkOut(id: string, checkOutDto: CheckOutDto): Promise<Booking> {
+  async checkOut(id: string, checkOutDto: CheckOutDto): Promise<any> {
     const booking = await this.getBookingById(id);
 
-    if (!booking.canCheckOut()) {
+    if (booking.status !== BookingStatus.checked_in) {
       throw new BadRequestException('Booking cannot be checked out');
     }
 
     // Use transaction to ensure atomicity
-    return await this.dataSource.transaction(async manager => {
-      booking.status = BookingStatus.CHECKED_OUT;
-      booking.checkedOutAt = new Date();
-      if (checkOutDto.notes) {
-        booking.notes = booking.notes ? `${booking.notes}\n${checkOutDto.notes}` : checkOutDto.notes;
-      }
+    return await this.prisma.$transaction(async (tx) => {
+      const notes = checkOutDto.notes ? 
+        (booking.notes ? `${booking.notes}\n${checkOutDto.notes}` : checkOutDto.notes) : 
+        booking.notes;
 
       // Free up the room
-      const room = await manager.findOne(Room, { where: { id: booking.roomId } });
+      const room = await tx.room.findUnique({ where: { id: booking.roomId } });
       if (room) {
-        room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
-        if (room.currentOccupancy === 0) {
-          room.status = RoomStatus.AVAILABLE;
-        }
-        await manager.save(Room, room);
+        const newOccupancy = Math.max(0, room.currentOccupancy - 1);
+        const newStatus = newOccupancy === 0 ? 'AVAILABLE' : room.status;
+        await tx.room.update({
+          where: { id: room.id },
+          data: { currentOccupancy: newOccupancy, status: newStatus }
+        });
 
         // Update room type availability
-        const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+        const roomType = await tx.roomType.findUnique({ where: { id: room.roomTypeId } });
         if (roomType) {
-          roomType.availableRooms = Math.min(roomType.totalRooms, roomType.availableRooms + 1);
-          await manager.save(RoomType, roomType);
+          await tx.roomType.update({
+            where: { id: roomType.id },
+            data: { availableRooms: Math.min(roomType.totalRooms, roomType.availableRooms + 1) }
+          });
         }
       }
 
-      return await manager.save(Booking, booking);
+      return await tx.booking.update({
+        where: { id },
+        data: {
+          status: BookingStatus.checked_out,
+          checkedOutAt: new Date(),
+          notes
+        }
+      });
     });
   }
 
@@ -1204,112 +1320,119 @@ async getBookings(filterDto: BookingFilterDto) {
   async deleteBooking(id: string): Promise<void> {
     const booking = await this.getBookingById(id);
 
-    if (booking.status === BookingStatus.CHECKED_IN) {
+    if (booking.status === BookingStatus.checked_in) {
       throw new BadRequestException('Cannot delete checked-in booking');
     }
 
-    if (booking.amountPaid > 0) {
+    if (Number(booking.amountPaid) > 0) {
       throw new BadRequestException('Cannot delete booking with payments');
     }
 
     // Use transaction to ensure atomicity
-    await this.dataSource.transaction(async manager => {
+    await this.prisma.$transaction(async (tx) => {
       // Free up the room if it was reserved
-      if ([BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
-        const room = await manager.findOne(Room, { where: { id: booking.roomId } });
+      if ([BookingStatus.pending, BookingStatus.confirmed].includes(booking.status as any)) {
+        const room = await tx.room.findUnique({ where: { id: booking.roomId } });
         if (room) {
-          room.currentOccupancy = Math.max(0, room.currentOccupancy - 1);
-          if (room.currentOccupancy === 0) {
-            room.status = RoomStatus.AVAILABLE;
-          }
-          await manager.save(Room, room);
+          const newOccupancy = Math.max(0, room.currentOccupancy - 1);
+          const newStatus = newOccupancy === 0 ? 'AVAILABLE' : room.status;
+          await tx.room.update({
+            where: { id: room.id },
+            data: { currentOccupancy: newOccupancy, status: newStatus }
+          });
 
           // Update room type availability
-          const roomType = await manager.findOne(RoomType, { where: { id: room.roomTypeId } });
+          const roomType = await tx.roomType.findUnique({ where: { id: room.roomTypeId } });
           if (roomType) {
-            roomType.availableRooms = Math.min(roomType.totalRooms, roomType.availableRooms + 1);
-            await manager.save(RoomType, roomType);
+            await tx.roomType.update({
+              where: { id: roomType.id },
+              data: { availableRooms: Math.min(roomType.totalRooms, roomType.availableRooms + 1) }
+            });
           }
         }
       }
 
       // Delete associated payments first
-      await manager.delete(Payment, { bookingId: booking.id });
+      await tx.payment.deleteMany({ where: { bookingId: booking.id } });
       
       // Delete the booking
-      await manager.remove(Booking, booking);
+      await tx.booking.delete({ where: { id: booking.id } });
     });
   }
 
   async syncRoomTypeAvailability(): Promise<void> {
-    const roomTypes = await this.roomTypeRepository.find();
+    const roomTypes = await this.prisma.roomType.findMany();
     
     for (const roomType of roomTypes) {
       // Get all rooms of this type
-      const rooms = await this.roomRepository.find({
+      const rooms = await this.prisma.room.findMany({
         where: { roomTypeId: roomType.id }
       });
 
       // Calculate available rooms based on actual room status
-      const availableRooms = rooms.filter(room => room.isAvailable()).length;
+      const availableRooms = rooms.filter(room => room.status?.toUpperCase() === 'AVAILABLE').length;
       
       // Update if different
       if (roomType.availableRooms !== availableRooms) {
-        roomType.availableRooms = availableRooms;
-        await this.roomTypeRepository.save(roomType);
+        await this.prisma.roomType.update({
+          where: { id: roomType.id },
+          data: { availableRooms }
+        });
       }
     }
   }
 
   // Legacy method for compatibility - now handles room payments only
-  async recordPayment(bookingId: string, paymentDto: PaymentDto, receivedBy?: string): Promise<{ payment: Payment; booking: Booking }> {
+  async recordPayment(bookingId: string, paymentDto: PaymentDto, receivedBy?: string): Promise<{ payment: any; booking: any }> {
     return this.recordRoomPayment(bookingId, paymentDto, receivedBy);
   }
 
   // Get booking payments
-  async getBookingPayments(bookingId: string): Promise<Payment[]> {
-    return await this.paymentRepository.find({
+  async getBookingPayments(bookingId: string): Promise<any[]> {
+    return await this.prisma.payment.findMany({
       where: { bookingId },
-      order: { paymentDate: 'DESC' }
+      orderBy: { paymentDate: 'desc' }
     });
   }
 
   // Get bookings by student
-  async getBookingsByStudent(studentId: string): Promise<Booking[]> {
-    return await this.bookingRepository
-      .createQueryBuilder('booking')
-      .leftJoinAndSelect('booking.hostel', 'hostel')
-      .leftJoinAndSelect('booking.room', 'room')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .leftJoinAndSelect('booking.payments', 'payments')
-      .where('booking.studentId = :studentId', { studentId })
-      .orderBy('booking.createdAt', 'DESC')
-      .getMany();
+  async getBookingsByStudent(studentId: string): Promise<any[]> {
+    return await this.prisma.booking.findMany({
+      where: { studentId },
+      include: {
+        hostel: true,
+        room: { include: { roomType: true } },
+        payments: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
   }
 
   // Get bookings by hostel
-  async getBookingsByHostel(hostelId: string, filterDto: Partial<BookingFilterDto> = {}): Promise<Booking[]> {
+  async getBookingsByHostel(hostelId: string, filterDto: Partial<BookingFilterDto> = {}): Promise<any[]> {
     const where: any = { hostelId };
 
-    if (filterDto.status) where.status = filterDto.status;
+    if (filterDto.status) where.status = typeof filterDto.status === 'string' ? filterDto.status as any : { in: filterDto.status as any };
     if (filterDto.paymentStatus) where.paymentStatus = filterDto.paymentStatus;
 
-    return await this.bookingRepository.find({
+    return await this.prisma.booking.findMany({
       where,
-      relations: ['room', 'room.roomType', 'payments'],
-      order: { createdAt: 'DESC' }
+      include: {
+        room: { include: { roomType: true } },
+        payments: true
+      },
+      orderBy: { createdAt: 'desc' }
     });
   }
 
   // Get booking statistics
   async getBookingStatistics(hostelId?: string) {
-    let queryBuilder = this.bookingRepository.createQueryBuilder('booking');
-
+    const where: any = {};
     if (hostelId) {
-      queryBuilder = queryBuilder.where('booking.hostelId = :hostelId', { hostelId });
+      where.hostelId = hostelId;
     }
 
-    const bookings = await queryBuilder.getMany();
+    const bookings = await this.prisma.booking.findMany({ where });
 
     const stats = {
       total: bookings.length,
@@ -1334,26 +1457,23 @@ async getBookings(filterDto: BookingFilterDto) {
     bookings.forEach(booking => {
       // Map booking status enum values to the expected property names
       switch (booking.status) {
-        case BookingStatus.PENDING:
+        case BookingStatus.pending:
           stats.pending++;
           break;
-        case BookingStatus.CONFIRMED:
+        case BookingStatus.confirmed:
           stats.confirmed++;
           break;
-        case BookingStatus.CHECKED_IN:
+        case BookingStatus.checked_in:
           stats.checkedIn++;
           break;
-        case BookingStatus.CHECKED_OUT:
+        case BookingStatus.checked_out:
           stats.checkedOut++;
           break;
-        case BookingStatus.CANCELLED:
+        case BookingStatus.cancelled:
           stats.cancelled++;
           break;
-        case BookingStatus.NO_SHOW:
-          stats.noShow++;
-          break;
         default:
-          console.warn('Unknown booking status:', booking.status);
+          break;
       }
 
       // Revenue calculations (including booking fees)
@@ -1363,7 +1483,7 @@ async getBookings(filterDto: BookingFilterDto) {
       stats.pendingRevenue += Number(booking.amountDue);
       
       // Track booking fees separately
-      if (booking.amountPaid >= this.BOOKING_FEE) {
+      if (Number(booking.amountPaid) >= this.BOOKING_FEE) {
         stats.bookingFeeRevenue += this.BOOKING_FEE;
       }
 
@@ -1374,7 +1494,8 @@ async getBookings(filterDto: BookingFilterDto) {
       stats.byPaymentStatus[booking.paymentStatus] = (stats.byPaymentStatus[booking.paymentStatus] || 0) + 1;
 
       // Duration calculation
-      totalDuration += booking.getDurationInDays();
+      const duration = Math.ceil((new Date(booking.checkOutDate).getTime() - new Date(booking.checkInDate).getTime()) / (1000 * 60 * 60 * 24));
+      totalDuration += duration;
     });
 
     stats.averageStayDuration = bookings.length > 0 ? totalDuration / bookings.length : 0;
@@ -1382,10 +1503,9 @@ async getBookings(filterDto: BookingFilterDto) {
     // Calculate occupancy rate if possible
     if (hostelId) {
       try {
-        const totalRooms = await this.roomRepository
-          .createQueryBuilder('room')
-          .where('room.hostelId = :hostelId', { hostelId })
-          .getCount();
+        const totalRooms = await this.prisma.room.count({
+          where: { hostelId }
+        });
         
         if (totalRooms > 0) {
           stats.occupancyRate = (stats.checkedIn / totalRooms) * 100;
@@ -1403,25 +1523,24 @@ async getBookings(filterDto: BookingFilterDto) {
   async generateReport(filterDto: BookingReportFilterDto) {
     const { hostelId, startDate, endDate, reportType = 'bookings' } = filterDto;
 
-    let queryBuilder = this.bookingRepository
-      .createQueryBuilder('booking')
-      .leftJoinAndSelect('booking.hostel', 'hostel')
-      .leftJoinAndSelect('booking.room', 'room')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .leftJoinAndSelect('booking.payments', 'payments');
+    const where: any = {};
 
     if (hostelId) {
-      queryBuilder = queryBuilder.where('booking.hostelId = :hostelId', { hostelId });
+      where.hostelId = hostelId;
     }
 
     if (startDate && endDate) {
-      queryBuilder = queryBuilder.andWhere(
-        'booking.createdAt BETWEEN :startDate AND :endDate',
-        { startDate, endDate }
-      );
+      where.createdAt = { gte: new Date(startDate), lte: new Date(endDate) };
     }
 
-    const bookings = await queryBuilder.getMany();
+    const bookings = await this.prisma.booking.findMany({
+      where,
+      include: {
+        hostel: true,
+        room: { include: { roomType: true } },
+        payments: true
+      }
+    });
 
     switch (reportType) {
       case 'revenue':
@@ -1435,7 +1554,7 @@ async getBookings(filterDto: BookingFilterDto) {
     }
   }
 
-  private generateRevenueReport(bookings: Booking[]) {
+  private generateRevenueReport(bookings: any[]) {
     const report = {
       totalBookings: bookings.length,
       totalRevenue: 0,
@@ -1477,7 +1596,7 @@ async getBookings(filterDto: BookingFilterDto) {
     return report;
   }
 
-  private generateOccupancyReport(bookings: Booking[]) {
+  private generateOccupancyReport(bookings: any[]) {
     const report = {
       totalBookings: bookings.length,
       activeBookings: 0,
@@ -1486,7 +1605,7 @@ async getBookings(filterDto: BookingFilterDto) {
       occupancyByHostel: {} as Record<string, number>
     };
 
-    const activeStatuses = [BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN];
+    const activeStatuses = [BookingStatus.confirmed, BookingStatus.checked_in];
     
     bookings.forEach(booking => {
       if (activeStatuses.includes(booking.status)) {
@@ -1501,7 +1620,7 @@ async getBookings(filterDto: BookingFilterDto) {
     return report;
   }
 
-  private generatePaymentReport(bookings: Booking[]) {
+  private generatePaymentReport(bookings: any[]) {
     const report = {
       totalBookings: bookings.length,
       fullyPaid: 0,
@@ -1523,11 +1642,11 @@ async getBookings(filterDto: BookingFilterDto) {
       report.totalPending += due;
       report.bookingFeesCollected += this.BOOKING_FEE; // All bookings have paid booking fee
 
-      if (booking.paymentStatus === PaymentStatus.PAID) {
+      if (booking.paymentStatus === PaymentStatus.paid) {
         report.fullyPaid++;
-      } else if (booking.paymentStatus === PaymentStatus.PARTIAL) {
+      } else if (booking.paymentStatus === PaymentStatus.partial) {
         report.partiallyPaid++;
-      } else if (booking.paymentStatus === PaymentStatus.PENDING) {
+      } else if (booking.paymentStatus === PaymentStatus.pending) {
         report.unpaid++;
       }
 
@@ -1542,7 +1661,7 @@ async getBookings(filterDto: BookingFilterDto) {
     return report;
   }
 
-  private generateBookingsReport(bookings: Booking[]) {
+  private generateBookingsReport(bookings: any[]) {
     const report = {
       totalBookings: bookings.length,
       statusBreakdown: {} as Record<string, number>,
@@ -1573,12 +1692,16 @@ async getBookings(filterDto: BookingFilterDto) {
       totalLeadTime += leadTime;
 
       // Cancellations
-      if (booking.status === BookingStatus.CANCELLED) {
+      if (booking.status === BookingStatus.cancelled) {
         cancellations++;
       }
 
       // Successful bookings (confirmed or completed)
-      if ([BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN, BookingStatus.CHECKED_OUT].includes(booking.status)) {
+      if (
+        [BookingStatus.confirmed, BookingStatus.checked_in, BookingStatus.checked_out].includes(
+          booking.status,
+        )
+      ) {
         successfulBookings++;
       }
     });
@@ -1592,48 +1715,55 @@ async getBookings(filterDto: BookingFilterDto) {
 
   // Mark overdue bookings
   async markOverdueBookings(): Promise<void> {
-    const overdueBookings = await this.bookingRepository
-      .createQueryBuilder('booking')
-      .where('booking.paymentDueDate < :today', { today: new Date() })
-      .andWhere('booking.paymentStatus != :paid', { paid: PaymentStatus.PAID })
-      .andWhere('booking.paymentStatus != :overdue', { overdue: PaymentStatus.OVERDUE })
-      .getMany();
+    const overdueBookings = await this.prisma.booking.findMany({
+      where: {
+        paymentDueDate: { lt: new Date() },
+        paymentStatus: { notIn: [PaymentStatus.paid, PaymentStatus.overdue] }
+      }
+    });
 
     for (const booking of overdueBookings) {
-      booking.paymentStatus = PaymentStatus.OVERDUE;
-      await this.bookingRepository.save(booking);
+      await this.prisma.booking.update({
+        where: { id: booking.id },
+        data: { paymentStatus: PaymentStatus.overdue }
+      });
     }
   }
 
   // Search bookings
   async searchBookings(searchTerm: string, filters: BookingFilterDto = {}) {
-    const queryBuilder = this.bookingRepository
-      .createQueryBuilder('booking')
-      .leftJoinAndSelect('booking.hostel', 'hostel')
-      .leftJoinAndSelect('booking.room', 'room')
-      .leftJoinAndSelect('room.roomType', 'roomType')
-      .leftJoinAndSelect('booking.payments', 'payments')
-      .where(
-        '(booking.studentName ILIKE :search OR booking.studentEmail ILIKE :search OR booking.studentPhone ILIKE :search OR room.roomNumber ILIKE :search OR hostel.name ILIKE :search)',
-        { search: `%${searchTerm}%` }
-      );
+    const where: any = {
+      OR: [
+        { studentName: { contains: searchTerm, mode: 'insensitive' } },
+        { studentEmail: { contains: searchTerm, mode: 'insensitive' } },
+        { studentPhone: { contains: searchTerm, mode: 'insensitive' } },
+        { room: { roomNumber: { contains: searchTerm, mode: 'insensitive' } } },
+        { hostel: { name: { contains: searchTerm, mode: 'insensitive' } } }
+      ]
+    };
 
     // Apply additional filters
     if (filters.hostelId) {
-      queryBuilder.andWhere('booking.hostelId = :hostelId', { hostelId: filters.hostelId });
+      where.hostelId = filters.hostelId;
     }
 
     if (filters.status) {
-      queryBuilder.andWhere('booking.status = :status', { status: filters.status });
+      where.status = typeof filters.status === 'string' ? filters.status : { in: filters.status };
     }
 
     if (filters.paymentStatus) {
-      queryBuilder.andWhere('booking.paymentStatus = :paymentStatus', { paymentStatus: filters.paymentStatus });
+      where.paymentStatus = filters.paymentStatus;
     }
 
-    const bookings = await queryBuilder
-      .orderBy('booking.createdAt', 'DESC')
-      .getMany();
+    const bookings = await this.prisma.booking.findMany({
+      where,
+      include: {
+        hostel: true,
+        room: { include: { roomType: true } },
+        payments: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
 
     return bookings;
   }
@@ -1648,4 +1778,16 @@ async getBookings(filterDto: BookingFilterDto) {
     return this.BOOKING_FEE;
   }
 
+  // Get rooms for a hostel (replaces roomRepository.find)
+  async getRooms(filters: { hostelId?: string; roomTypeId?: string; status?: string } = {}) {
+    const where: Prisma.RoomWhereInput = {};
+    if (filters.hostelId) where.hostelId = filters.hostelId;
+    if (filters.roomTypeId) where.roomTypeId = filters.roomTypeId;
+    if (filters.status) where.status = filters.status;
+
+    return this.prisma.room.findMany({
+      where,
+      include: { roomType: true }
+    });
+  }
 }

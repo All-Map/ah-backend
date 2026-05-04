@@ -2,8 +2,12 @@
 import { IsString, IsNotEmpty, IsOptional, IsNumber, IsEnum, IsArray, IsBoolean, Min, Max, IsUUID } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { RoomStatus } from 'src/entities/room.entity';
-
+export enum RoomStatus {
+  AVAILABLE = 'available',
+  OCCUPIED = 'occupied',
+  MAINTENANCE = 'maintenance',
+  RESERVED = 'reserved',
+}
 export class CreateRoomDto {
   @ApiProperty({ description: 'Hostel ID' })
   @IsNotEmpty()
@@ -132,10 +136,14 @@ export class RoomFilterDto {
   @IsString()
   sortBy?: 'roomNumber' | 'floor' | 'status' | 'currentOccupancy' | 'createdAt' = 'roomNumber';
 
-  @ApiPropertyOptional({ description: 'Sort order', enum: ['ASC', 'DESC'], default: 'ASC' })
+  @ApiPropertyOptional({ description: 'Sort order', enum: ['asc', 'desc'], default: 'asc' })
   @IsOptional()
-  @IsEnum(['ASC', 'DESC'])
-  sortOrder?: 'ASC' | 'DESC' = 'ASC';
+  @IsEnum(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc' = 'asc';
+  @ApiPropertyOptional({ description: 'Filter by gender', enum: ['male', 'female', 'mixed'] })
+  @IsOptional()
+  @IsEnum(['male', 'female', 'mixed'])
+  gender?: 'male' | 'female' | 'mixed';
 }
 
 export class BulkCreateRoomDto {
@@ -227,4 +235,16 @@ export class RoomSearchDto {
     return value;
   })
   available?: boolean;
+}
+export class BulkUpdateStatusDto {
+  @ApiProperty({ description: 'Array of room IDs to update' })
+  @IsNotEmpty()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  ids: string[];
+
+  @ApiProperty({ description: 'New room status', enum: RoomStatus })
+  @IsNotEmpty()
+  @IsEnum(RoomStatus)
+  status: RoomStatus;
 }

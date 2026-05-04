@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, UploadedFiles, UseInterceptors, Request, HttpStatus, ParseUUIDPipe, Patch } from '@nestjs/common';
 import { HostelsService } from './hostels.service';
 import { CreateHostelDto } from './dto/create-hostel.dto';
-import { UserRole } from '../entities/user.entity';
+import { UserRole } from '@prisma/client';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -9,7 +9,7 @@ import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { UpdateHostelDto } from './dto/update-hostel.dto';
 import { File as MulterFile } from 'multer';
 import { ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
-import { RoomType } from 'src/entities/room-type.entity';
+import { RoomType } from '@prisma/client';
 import { RoomsService } from 'src/rooms/rooms.service';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
@@ -21,7 +21,7 @@ export class HostelsController {
   constructor(private readonly hostelsService: HostelsService, private readonly roomsService: RoomsService) {}
 
   @Post('create')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @UseInterceptors(FilesInterceptor('images'))
   create(
     @Request() req: any,
@@ -47,7 +47,7 @@ export class HostelsController {
 
   // Updated: Fetch hostels for the current user only
 @Get("fetch")
-@Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@Roles(UserRole.hostel_admin, UserRole.super_admin)
 async findUserHostels(@CurrentUser() user: any) {
   const userId = user.id || user.sub;
   
@@ -68,7 +68,7 @@ async findUserHostels(@CurrentUser() user: any) {
   }
 
   @Get("admin/:adminId")
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   findHostelsByAdmin(@Param('adminId') adminId: string) {
     return this.hostelsService.findByAdminId(adminId);
   }
@@ -87,7 +87,7 @@ async getHostelContact(
 }
 
   @Patch(':id/booking-status')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Toggle hostel booking availability' })
   @ApiParam({ name: 'id', description: 'Hostel ID' })
   @ApiResponse({ 
@@ -99,7 +99,7 @@ async getHostelContact(
     @Body('acceptingBookings') acceptingBookings: boolean,
     @CurrentUser() user: any
   ) {
-    if (user.role !== UserRole.SUPER_ADMIN) {
+    if (user.role !== UserRole.super_admin) {
       await this.hostelsService.verifyOwnership(id, user.id || user.sub);
     }
     
@@ -111,15 +111,14 @@ async getHostelContact(
   @ApiParam({ name: 'id', description: 'Hostel ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Room types retrieved successfully',
-    type: [RoomType] 
+    description: 'Room types retrieved successfully'
   })
   async getRoomTypesByHostelId(
     @Param('id', ParseUUIDPipe) hostelId: string,
     @CurrentUser() user: any
   ): Promise<RoomType[]> {
     // Ensure user can only access their own hostel data (unless super admin)
-    if (user.role !== UserRole.SUPER_ADMIN) {
+    if (user.role !== UserRole.super_admin) {
       await this.hostelsService.verifyOwnership(hostelId, user.id || user.sub);
     }
     
@@ -131,8 +130,7 @@ async getHostelContact(
   @ApiParam({ name: 'id', description: 'Hostel ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Room types retrieved successfully',
-    type: [RoomType] 
+    description: 'Room types retrieved successfully'
   })
   async getRoomTypesByHostelIdStudent(
     @Param('id', ParseUUIDPipe) hostelId: string
@@ -146,8 +144,7 @@ async getHostelContact(
   @ApiParam({ name: 'roomTypeId', description: 'Room Type ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Room type details retrieved successfully',
-    type: RoomType 
+    description: 'Room type details retrieved successfully'
   })
   async getRoomTypeById(
     @Param('id', ParseUUIDPipe) hostelId: string,
@@ -155,7 +152,7 @@ async getHostelContact(
     @CurrentUser() user: any
   ): Promise<RoomType> {
     // Ensure user can only access their own hostel data (unless super admin)
-    if (user.role !== UserRole.SUPER_ADMIN) {
+    if (user.role !== UserRole.super_admin) {
       await this.hostelsService.verifyOwnership(hostelId, user.id || user.sub);
     }
     
@@ -168,8 +165,7 @@ async getHostelContact(
 @ApiParam({ name: 'roomTypeId', description: 'Room Type ID' })
 @ApiResponse({ 
   status: HttpStatus.OK, 
-  description: 'Room type details retrieved successfully',
-  type: RoomType 
+  description: 'Room type details retrieved successfully'
 })
 async getRoomTypeByIdStudent(
   @Param('id', ParseUUIDPipe) hostelId: string,
@@ -187,7 +183,7 @@ async getRoomTypeByIdStudent(
 
 
   @Put(':id')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @UseInterceptors(FilesInterceptor('images'))
   async update(
     @Param('id') id: string,
@@ -196,7 +192,7 @@ async getRoomTypeByIdStudent(
     @CurrentUser() user: any
   ) {
     // Ensure user can only update their own hostels (unless super admin)
-    if (user.role !== UserRole.SUPER_ADMIN) {
+    if (user.role !== UserRole.super_admin) {
       await this.hostelsService.verifyOwnership(id, user.id || user.sub);
     }
     
@@ -204,14 +200,14 @@ async getRoomTypeByIdStudent(
   }
 
   @Delete(':id/image')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   removeImage(
     @Param('id') id: string,
     @Body('imageUrl') imageUrl: string,
     @CurrentUser() user: any
   ) {
     // Ensure user can only modify their own hostels (unless super admin)
-    if (user.role !== UserRole.SUPER_ADMIN) {
+    if (user.role !== UserRole.super_admin) {
       this.hostelsService.verifyOwnership(id, user.id || user.sub);
     }
     
@@ -219,13 +215,13 @@ async getRoomTypeByIdStudent(
   }
 
   @Delete(':id')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   async remove(
     @Param('id') id: string,
     @CurrentUser() user: any
   ) {
     // Ensure user can only delete their own hostels (unless super admin)
-    if (user.role !== UserRole.SUPER_ADMIN) {
+    if (user.role !== UserRole.super_admin) {
       await this.hostelsService.verifyOwnership(id, user.id || user.sub);
     }
     

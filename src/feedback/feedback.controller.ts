@@ -2,12 +2,16 @@ import { Controller, Post, Body, UseGuards, Get, Query, Param, Patch, Req, Ip } 
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { User } from '../entities/user.entity';
+import { JwtUser } from '../auth/types/jwt-user';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { FeedbackService } from './feedback.service';
-import { FeedbackStatus, FeedbackCategory } from '../entities/feedback.entity';
-import { PublicFeedbackStatus, PublicFeedbackCategory } from '../entities/public-feedback.entity';
+import {
+  FeedbackStatus,
+  FeedbackCategory,
+  PublicFeedbackStatus,
+  PublicFeedbackCategory,
+} from './feedback.types';
 
 export class PublicFeedbackDto {
   name: string;
@@ -56,7 +60,7 @@ export class FeedbackController {
   @UseGuards(JwtAuthGuard)
   @Post('submit')
   async submitFeedback(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtUser,
     @Body() feedbackDto: { subject: string; message: string; category: string }
   ) {
     try {
@@ -93,7 +97,7 @@ export class FeedbackController {
 
   @UseGuards(JwtAuthGuard)
   @Get('my-feedback')
-  async getMyFeedback(@CurrentUser() user: User) {
+  async getMyFeedback(@CurrentUser() user: JwtUser) {
     try {
       const { data, error } = await this.feedbackService['supabase'].client
         .from('feedback')
@@ -307,7 +311,7 @@ export class FeedbackController {
   async addAdminNoteToPublicFeedback(
     @Param('id') feedbackId: string,
     @Body() noteDto: { note: string },
-    @CurrentUser() user: User
+    @CurrentUser() user: JwtUser
   ) {
     try {
       const feedback = await this.feedbackService.addAdminNoteToPublicFeedback(

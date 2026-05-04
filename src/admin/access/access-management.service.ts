@@ -1,15 +1,10 @@
-// src/admin/access/access-management.service.ts
 import {
   Injectable,
   NotFoundException,
-  BadRequestException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, MoreThan, LessThan, Like, IsNull, Not } from 'typeorm';
-import { Access } from '../../entities/access.entity';
-import { User } from '../../entities/user.entity';
-import { PreviewUsage } from '../../entities/preview-usage.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 import { PreviewUsageService } from '../../preview/preview-usage.service';
+import { Prisma } from '@prisma/client';
 
 export interface AccessRecord {
   id: string;
@@ -23,7 +18,7 @@ export interface AccessRecord {
   expiresAt: Date;
   createdAt: Date;
   source: string;
-  paystackReference?: string;
+  paystackReference?: string | null;
   status: 'active' | 'expired' | 'upcoming';
   daysRemaining: number;
 }
@@ -60,20 +55,15 @@ export interface PreviewUsageRecord {
     email: string;
   };
   usedAt: Date;
-  source: string;
-  ipAddress?: string;
-  userAgent?: string;
+  source: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
 }
 
 @Injectable()
 export class AccessManagementService {
   constructor(
-    @InjectRepository(Access)
-    private readonly accessRepository: Repository<Access>,
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-    @InjectRepository(PreviewUsage)
-    private readonly previewUsageRepository: Repository<PreviewUsage>,
+    private readonly prisma: PrismaService,
     private readonly previewUsageService: PreviewUsageService,
   ) {}
 
@@ -94,71 +84,70 @@ export class AccessManagementService {
   }> {
     const page = filter.page || 1;
     const limit = filter.limit || 20;
-    const skip = (page - 1) * limit;
-
-    const queryBuilder = this.accessRepository
-      .createQueryBuilder('access')
-      .leftJoinAndSelect('access.user', 'user')
-      .select([
-        'access.id',
-        'access.userId',
-        'access.expiresAt',
-        'access.createdAt',
-        'access.source',
-        'access.paystackReference',
-        'user.id',
-        'user.name',
-        'user.email',
-        'user.role',
-      ]);
-
-    // Apply filters
-    if (filter.source) {
-      queryBuilder.andWhere('access.source = :source', { source: filter.source });
-    }
-
-    if (filter.search) {
-      queryBuilder.andWhere(
-        '(user.name ILIKE :search OR user.email ILIKE :search OR access.paystackReference ILIKE :search)',
-        { search: `%${filter.search}%` },
-      );
-    }
-
     const now = new Date();
 
+    const where: Prisma.AccessWhereInput = {};
+
+    if (filter.source) {
+      where.source = filter.source;
+    }
+
     if (filter.status === 'active') {
-      queryBuilder.andWhere('access.expiresAt > :now', { now });
+      where.expiresAt = { gt: now };
     } else if (filter.status === 'expired') {
-      queryBuilder.andWhere('access.expiresAt <= :now', { now });
+      where.expiresAt = { lte: now };
     } else if (filter.status === 'upcoming') {
       const thirtyDaysFromNow = new Date();
       thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-      queryBuilder.andWhere('access.expiresAt > :now', { now });
-      queryBuilder.andWhere('access.expiresAt <= :thirtyDaysFromNow', { thirtyDaysFromNow });
+      where.expiresAt = { gt: now, lte: thirtyDaysFromNow };
     }
 
-    // Apply pagination
-    queryBuilder.skip(skip).take(limit);
-    queryBuilder.orderBy('access.expiresAt', 'DESC');
+    if (filter.search) {
+      where.OR = [
+        { user: { name: { contains: filter.search, mode: 'insensitive' } } },
+        { user: { email: { contains: filter.search, mode: 'insensitive' } } },
+        { paystackReference: { contains: filter.search, mode: 'insensitive' } },
+      ];
+    }
 
-    const [records, total] = await queryBuilder.getManyAndCount();
+    const [accessRows, total] = await Promise.all([
+      this.prisma.access.findMany({
+        where,
+        include: { user: true },
+        orderBy: { expiresAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.access.count({ where }),
+    ]);
 
-    // Transform records with additional calculated fields
-    const transformedRecords = records.map(record => {
+    const transformedRecords: AccessRecord[] = accessRows.map((record) => {
       const expiresAt = new Date(record.expiresAt);
       const isExpired = expiresAt <= now;
-      const isUpcoming = !isExpired && expiresAt <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-      
+      const isUpcoming =
+        !isExpired && expiresAt <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
       let status: 'active' | 'expired' | 'upcoming' = 'active';
       if (isExpired) status = 'expired';
       else if (isUpcoming) status = 'upcoming';
 
-      const daysRemaining = isExpired 
-        ? 0 
+      const daysRemaining = isExpired
+        ? 0
         : Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
       return {
-        ...record,
+        id: record.id,
+        userId: record.userId,
+        user: {
+          id: record.user.id,
+          name: record.user.name ?? '',
+          email: record.user.email,
+          role: record.user.role,
+        },
+        expiresAt: record.expiresAt,
+        createdAt: record.createdAt,
+        source: record.source,
+        paystackReference: record.paystackReference,
         status,
         daysRemaining,
       };
@@ -179,47 +168,37 @@ export class AccessManagementService {
     const now = new Date();
     const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    const [
-      totalAccess,
-      activeAccess,
-      expiredAccess,
-      upcomingExpiry,
-      bySource,
-      allUsers,
-      usersWithAccess,
-    ] = await Promise.all([
-      this.accessRepository.count(),
-      this.accessRepository.count({ where: { expiresAt: MoreThan(now) } }),
-      this.accessRepository.count({ where: { expiresAt: LessThan(now) } }),
-      this.accessRepository.count({
-        where: {
-          expiresAt: Between(now, thirtyDaysFromNow),
-        },
-      }),
-      this.accessRepository
-        .createQueryBuilder('access')
-        .select('access.source, COUNT(*) as count')
-        .groupBy('access.source')
-        .getRawMany(),
-      this.userRepository.count(),
-      this.accessRepository
-        .createQueryBuilder('access')
-        .select('COUNT(DISTINCT access.userId) as count')
-        .where('access.expiresAt > :now', { now })
-        .getRawOne(),
-    ]);
+    const [totalAccess, activeAccess, expiredAccess, upcomingExpiry, bySourceRows, allUsers] =
+      await Promise.all([
+        this.prisma.access.count(),
+        this.prisma.access.count({ where: { expiresAt: { gt: now } } }),
+        this.prisma.access.count({ where: { expiresAt: { lte: now } } }),
+        this.prisma.access.count({
+          where: { expiresAt: { gt: now, lte: thirtyDaysFromNow } },
+        }),
+        this.prisma.access.groupBy({
+          by: ['source'],
+          _count: true,
+        }),
+        this.prisma.user.count(),
+      ]);
 
-    const sourceStats = bySource.reduce((acc, row) => {
-      acc[row.access_source] = parseInt(row.count);
-      return acc;
-    }, {} as Record<string, number>);
+    const distinctActiveUsers = await this.prisma.access.findMany({
+      where: { expiresAt: { gt: now } },
+      distinct: ['userId'],
+      select: { userId: true },
+    });
 
-    // Calculate estimated revenue (assuming $30 per access)
-    const activeAccessCount = activeAccess || 0;
-    const estimatedMonthlyRecurringRevenue = activeAccessCount * 30;
+    const sourceStats = bySourceRows.reduce(
+      (acc, row) => {
+        acc[row.source] = row._count;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
-    // Calculate conversion rate
-    const usersWithAccessCount = parseInt(usersWithAccess?.count) || 0;
+    const usersWithAccessCount = distinctActiveUsers.length;
+    const estimatedMonthlyRecurringRevenue = activeAccess * 30;
     const conversionRate = allUsers > 0 ? (usersWithAccessCount / allUsers) * 100 : 0;
 
     return {
@@ -228,7 +207,7 @@ export class AccessManagementService {
       expiredAccess,
       upcomingExpiry,
       bySource: sourceStats,
-      totalRevenue: activeAccessCount * 30, // Assuming $30 per active access
+      totalRevenue: activeAccess * 30,
       estimatedMonthlyRecurringRevenue,
       usersWithAccess: usersWithAccessCount,
       usersWithoutAccess: allUsers - usersWithAccessCount,
@@ -247,25 +226,29 @@ export class AccessManagementService {
   }> {
     const skip = (page - 1) * limit;
 
-    const queryBuilder = this.previewUsageRepository
-      .createQueryBuilder('preview')
-      .leftJoinAndSelect('preview.user', 'user')
-      .select([
-        'preview.id',
-        'preview.userId',
-        'preview.usedAt',
-        'preview.source',
-        'preview.ipAddress',
-        'preview.userAgent',
-        'user.id',
-        'user.name',
-        'user.email',
-      ])
-      .orderBy('preview.usedAt', 'DESC')
-      .skip(skip)
-      .take(limit);
+    const [rows, total] = await Promise.all([
+      this.prisma.previewUsage.findMany({
+        include: { user: true },
+        orderBy: { usedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.previewUsage.count(),
+    ]);
 
-    const [records, total] = await queryBuilder.getManyAndCount();
+    const records: PreviewUsageRecord[] = rows.map((preview) => ({
+      id: preview.id,
+      userId: preview.userId,
+      user: {
+        id: preview.user.id,
+        name: preview.user.name ?? '',
+        email: preview.user.email,
+      },
+      usedAt: preview.usedAt,
+      source: preview.source,
+      ipAddress: preview.ipAddress,
+      userAgent: preview.userAgent,
+    }));
 
     return {
       records,
@@ -288,48 +271,72 @@ export class AccessManagementService {
     currentAccess?: AccessRecord;
     hasActiveAccess: boolean;
   }> {
-    const [accessHistory, previewHistory] = await Promise.all([
-      this.accessRepository.find({
+    const [accessHistoryRows, previewHistoryRows] = await Promise.all([
+      this.prisma.access.findMany({
         where: { userId },
-        relations: ['user'],
-        order: { createdAt: 'DESC' },
+        include: { user: true },
+        orderBy: { createdAt: 'desc' },
       }),
-      this.previewUsageRepository.find({
+      this.prisma.previewUsage.findMany({
         where: { userId },
-        relations: ['user'],
-        order: { usedAt: 'DESC' },
+        include: { user: true },
+        orderBy: { usedAt: 'desc' },
       }),
     ]);
 
     const now = new Date();
-    const currentAccess = accessHistory.find(access => 
-      new Date(access.expiresAt) > now
-    );
 
-    const transformedAccessHistory = accessHistory.map(record => {
+    const accessHistory: AccessRecord[] = accessHistoryRows.map((record) => {
       const expiresAt = new Date(record.expiresAt);
       const isExpired = expiresAt <= now;
-      const daysRemaining = isExpired 
-        ? 0 
+      const daysRemaining = isExpired
+        ? 0
         : Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-      const status: 'active' | 'expired' = isExpired ? 'expired' : 'active';
-
       return {
-        ...record,
-        status,
+        id: record.id,
+        userId: record.userId,
+        user: {
+          id: record.user.id,
+          name: record.user.name ?? '',
+          email: record.user.email,
+          role: record.user.role,
+        },
+        expiresAt: record.expiresAt,
+        createdAt: record.createdAt,
+        source: record.source,
+        paystackReference: record.paystackReference,
+        status: isExpired ? 'expired' : 'active',
         daysRemaining,
       };
     });
 
+    const previewHistory: PreviewUsageRecord[] = previewHistoryRows.map((preview) => ({
+      id: preview.id,
+      userId: preview.userId,
+      user: {
+        id: preview.user.id,
+        name: preview.user.name ?? '',
+        email: preview.user.email,
+      },
+      usedAt: preview.usedAt,
+      source: preview.source,
+      ipAddress: preview.ipAddress,
+      userAgent: preview.userAgent,
+    }));
+
+    const currentAccess = accessHistory.find((a) => a.status === 'active');
+
     return {
-      accessHistory: transformedAccessHistory,
+      accessHistory,
       previewHistory,
-      currentAccess: currentAccess ? {
-        ...currentAccess,
-        status: 'active' as const,
-        daysRemaining: Math.ceil((new Date(currentAccess.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
-      } : undefined,
+      currentAccess: currentAccess
+        ? {
+            ...currentAccess,
+            status: 'active' as const,
+            daysRemaining: currentAccess.daysRemaining,
+          }
+        : undefined,
       hasActiveAccess: !!currentAccess,
     };
   }
@@ -348,7 +355,7 @@ export class AccessManagementService {
         previousStartDate.setDate(previousStartDate.getDate() - 1);
         previousEndDate = new Date(startDate);
         break;
-      
+
       case 'weekly':
         startDate = new Date(now);
         startDate.setDate(startDate.getDate() - 7);
@@ -356,7 +363,7 @@ export class AccessManagementService {
         previousStartDate.setDate(previousStartDate.getDate() - 7);
         previousEndDate = new Date(startDate);
         break;
-      
+
       case 'monthly':
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
         previousStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -364,56 +371,54 @@ export class AccessManagementService {
         break;
     }
 
-    // Get active access records created in the period
-    const currentAccess = await this.accessRepository.find({
-      where: {
-        createdAt: Between(startDate, now),
-        source: 'paystack', // Only count paid access for revenue
-      },
-    });
+    const [currentAccess, previousAccess, revenueBySource] = await Promise.all([
+      this.prisma.access.findMany({
+        where: {
+          createdAt: { gte: startDate, lte: now },
+          source: 'paystack',
+        },
+      }),
+      this.prisma.access.findMany({
+        where: {
+          createdAt: { gte: previousStartDate, lte: previousEndDate },
+          source: 'paystack',
+        },
+      }),
+      this.prisma.access.groupBy({
+        by: ['source'],
+        where: {
+          createdAt: { gte: startDate, lte: now },
+          source: { in: ['paystack', 'manual_grant', 'free_trial'] },
+        },
+        _count: true,
+      }),
+    ]);
 
-    const previousAccess = await this.accessRepository.find({
-      where: {
-        createdAt: Between(previousStartDate, previousEndDate),
-        source: 'paystack',
-      },
-    });
-
-    // Calculate revenue (assuming $30 per access)
     const currentRevenue = currentAccess.length * 30;
     const previousRevenue = previousAccess.length * 30;
-    const growth = previousRevenue > 0 
-      ? ((currentRevenue - previousRevenue) / previousRevenue) * 100 
-      : currentRevenue > 0 ? 100 : 0;
+    const growth =
+      previousRevenue > 0
+        ? ((currentRevenue - previousRevenue) / previousRevenue) * 100
+        : currentRevenue > 0
+          ? 100
+          : 0;
 
-    // Get revenue by source
-    const revenueBySource = await this.accessRepository
-      .createQueryBuilder('access')
-      .select('access.source, COUNT(*) as count')
-      .where('access.createdAt BETWEEN :startDate AND :endDate', {
-        startDate,
-        endDate: now,
-      })
-      .andWhere('access.source IN (:...sources)', {
-        sources: ['paystack', 'manual_grant', 'free_trial'],
-      })
-      .groupBy('access.source')
-      .getRawMany();
+    const bySource = revenueBySource.reduce(
+      (acc, row) => {
+        acc[row.source] = row._count * 30;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
-    const bySource = revenueBySource.reduce((acc, row) => {
-      acc[row.access_source] = parseInt(row.count) * 30; // $30 per access
-      return acc;
-    }, {} as Record<string, number>);
-
-    // Get monthly revenue for last 6 months
     const monthlyRevenue: Record<string, number> = {};
     for (let i = 5; i >= 0; i--) {
       const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
-      
-      const monthAccess = await this.accessRepository.count({
+
+      const monthAccess = await this.prisma.access.count({
         where: {
-          createdAt: Between(monthStart, monthEnd),
+          createdAt: { gte: monthStart, lte: monthEnd },
           source: 'paystack',
         },
       });
@@ -422,15 +427,12 @@ export class AccessManagementService {
       monthlyRevenue[monthKey] = monthAccess * 30;
     }
 
-    // Estimated monthly recurring revenue (active paystack subscriptions)
-    const activePaystackAccess = await this.accessRepository.count({
+    const activePaystackAccess = await this.prisma.access.count({
       where: {
-        expiresAt: MoreThan(now),
+        expiresAt: { gt: now },
         source: 'paystack',
       },
     });
-
-    const estimatedMonthlyRecurring = activePaystackAccess * 30;
 
     return {
       total: currentRevenue,
@@ -439,12 +441,16 @@ export class AccessManagementService {
       growth: Math.round(growth * 10) / 10,
       bySource,
       byMonth: monthlyRevenue,
-      estimatedMonthlyRecurring,
+      estimatedMonthlyRecurring: activePaystackAccess * 30,
     };
   }
 
-  async grantManualAccess(userId: string, days: number = 30, source: string = 'manual_grant'): Promise<AccessRecord> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
+  async grantManualAccess(
+    userId: string,
+    days: number = 30,
+    source: string = 'manual_grant',
+  ): Promise<AccessRecord> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -452,32 +458,36 @@ export class AccessManagementService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + days);
 
-    const accessRecord = this.accessRepository.create({
-      userId,
-      expiresAt,
-      source,
-      createdAt: new Date(),
+    const savedRecord = await this.prisma.access.create({
+      data: {
+        userId,
+        expiresAt,
+        source,
+      },
     });
 
-    const savedRecord = await this.accessRepository.save(accessRecord);
-
     return {
-      ...savedRecord,
+      id: savedRecord.id,
+      userId: savedRecord.userId,
       user: {
         id: user.id,
-        name: user.name,
+        name: user.name ?? '',
         email: user.email,
         role: user.role,
       },
+      expiresAt: savedRecord.expiresAt,
+      createdAt: savedRecord.createdAt,
+      source: savedRecord.source,
+      paystackReference: savedRecord.paystackReference,
       status: 'active',
       daysRemaining: days,
     };
   }
 
   async extendAccess(id: string, days: number = 30): Promise<AccessRecord> {
-    const access = await this.accessRepository.findOne({
+    const access = await this.prisma.access.findUnique({
       where: { id },
-      relations: ['user'],
+      include: { user: true },
     });
 
     if (!access) {
@@ -487,29 +497,43 @@ export class AccessManagementService {
     const newExpiry = new Date(access.expiresAt);
     newExpiry.setDate(newExpiry.getDate() + days);
 
-    access.expiresAt = newExpiry;
-    const updatedAccess = await this.accessRepository.save(access);
+    const updatedAccess = await this.prisma.access.update({
+      where: { id },
+      data: { expiresAt: newExpiry },
+    });
 
     const now = new Date();
     const daysRemaining = Math.ceil((newExpiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
     return {
-      ...updatedAccess,
+      id: updatedAccess.id,
+      userId: updatedAccess.userId,
+      user: {
+        id: access.user.id,
+        name: access.user.name ?? '',
+        email: access.user.email,
+        role: access.user.role,
+      },
+      expiresAt: updatedAccess.expiresAt,
+      createdAt: updatedAccess.createdAt,
+      source: updatedAccess.source,
+      paystackReference: updatedAccess.paystackReference,
       status: newExpiry > now ? 'active' : 'expired',
       daysRemaining,
     };
   }
 
   async revokeAccess(id: string): Promise<{ message: string }> {
-    const access = await this.accessRepository.findOne({ where: { id } });
+    const access = await this.prisma.access.findUnique({ where: { id } });
 
     if (!access) {
       throw new NotFoundException('Access record not found');
     }
 
-    // Set expiry to now
-    access.expiresAt = new Date();
-    await this.accessRepository.save(access);
+    await this.prisma.access.update({
+      where: { id },
+      data: { expiresAt: new Date() },
+    });
 
     return { message: 'Access revoked successfully' };
   }
@@ -540,7 +564,7 @@ export class AccessManagementService {
       'Source',
     ];
 
-    const rows = records.map(record => [
+    const rows = records.map((record) => [
       record.user.id,
       record.user.name || '',
       record.user.email,
@@ -554,11 +578,8 @@ export class AccessManagementService {
       record.source,
     ]);
 
-    const csv = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
-    ].join('\n');
-
-    return csv;
+    return [headers.join(','), ...rows.map((row) => row.map((cell) => `"${cell}"`).join(','))].join(
+      '\n',
+    );
   }
 }

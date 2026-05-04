@@ -1,6 +1,6 @@
 import { IsString, IsNumber, IsPositive, IsEnum, IsOptional, IsUUID, IsDateString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { DepositType, DepositStatus } from 'src/entities/deposit.entity';
+import { DepositType, DepositStatus } from '@prisma/client';
 
 
 export class CreateDepositDto {
@@ -9,7 +9,7 @@ export class CreateDepositDto {
   @IsPositive()
   amount: number;
 
-  @ApiProperty({ enum: DepositType, default: DepositType.ACCOUNT_CREDIT })
+  @ApiProperty({ enum: DepositType, default: DepositType.account_credit })
   @IsEnum(DepositType)
   @IsOptional()
   depositType?: DepositType;

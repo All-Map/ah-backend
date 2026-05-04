@@ -32,6 +32,7 @@
 - 💳 Integrated payment processing via Paystack (GHS 38 access, GHS 70 booking fees)
 - 🔐 JWT-based authentication with role-based access control (RBAC)
 - 📧 Transactional email notifications via Resend
+- ✅ Model Relationship Diagram (ERD)
 - 🖼️ Image management with Cloudinary CDN
 - 📊 Admin dashboards and analytics
 - ⭐ User reviews and moderation workflows
@@ -74,8 +75,8 @@ Create `.env` file with required variables:
 
 ```bash
 # Database
-SUPABASE_DB_URL=postgresql://user:pass@host:port/database
-DB_SYNC=false  # TypeORM auto-sync disabled in production
+DATABASE_URL=postgresql://user:pass@host:port/database?schema=public
+DIRECT_DATABASE_URL=postgresql://user:pass@host:port/database
 
 # Authentication
 JWT_SECRET=your_jwt_secret_key
@@ -178,8 +179,8 @@ This project includes comprehensive professional documentation. **Start here:**
 | --------------------- | ------------------------ | ------- |
 | **Framework**         | NestJS                   | 11.1.5  |
 | **Language**          | TypeScript               | 5.7.3   |
-| **Database**          | PostgreSQL (Supabase)    | 12+     |
-| **ORM**               | TypeORM                  | 0.3.25  |
+| **Database**          | PostgreSQL (Supabase)    | 15+     |
+| **ORM**               | Prisma                   | 6.12.0  |
 | **Authentication**    | Passport.js, JWT, bcrypt | -       |
 | **Payment**           | Paystack API             | -       |
 | **Storage**           | Cloudinary               | -       |
@@ -202,21 +203,23 @@ src/
 ├── hostels/              # Hostel CRUD and management
 ├── rooms/                # Room and room-type management
 ├── bookings/             # Booking lifecycle and scheduling
-├── payment/              # Payment entity and workflows
+├── payment/              # Payment models and workflows
 ├── paystack/             # Paystack API integration
 ├── review/               # Review submission and moderation
-├── feedback/             # User feedback and public feedback
+├── feedback/             # User feedback and public feedback (fixed typo)
 ├── admin/                # Admin dashboard and controls
 ├── mail/                 # Transactional email templates
 ├── cloudinary/           # Image upload and management
 ├── profile/              # User profile management
-├── entities/             # TypeORM database entities (15 total)
-├── config/               # Database and application configuration
+├── prisma/               # Prisma service and client
+├── access/               # Access control and preview management
+├── onboarding/           # Onboarding workflows (fixed typo)
+├── deposits/             # Security deposit tracking
 └── main.ts               # Application bootstrap (Port 1000)
 ```
 
-**Database Entities (15 total):**
-User, Hostel, Room, RoomType, Booking, Payment, Review, School, Deposit, Verification, AdminVerification, Access, PreviewUsage, Feedback, PublicFeedback
+**Prisma Models (15 total):**
+User, Hostel, Room, RoomType, Booking, Payment, Review, School, Deposit, Access, AdminVerification, PreviewUsage, Feedback, PublicFeedback
 
 ---
 
@@ -269,17 +272,20 @@ npm run format
 
 ### Database Migrations
 
-TypeORM is configured with `synchronize: false` (production-safe). Entities auto-load from `src/entities/`.
+Prisma handles database schema management. The schema is defined in `prisma/schema.prisma`.
 
 ```bash
-# Generate migration
-npm run typeorm migration:generate -- -n MigrationName
+# Generate Prisma Client
+npx prisma generate
 
-# Run migrations
-npm run typeorm migration:run
+# Create and apply a migration (development)
+npx prisma migrate dev --name init
 
-# Revert last migration
-npm run typeorm migration:revert
+# Apply migrations to production/staging
+npx prisma migrate deploy
+
+# Open Prisma Studio to explore data
+npx prisma studio
 ```
 
 ---
@@ -346,7 +352,7 @@ GitHub Actions workflow:
 ## 📖 Additional Resources
 
 - [NestJS Documentation](https://docs.nestjs.com)
-- [TypeORM Guide](https://typeorm.io)
+- [Prisma Documentation](https://www.prisma.io/docs)
 - [Paystack API Reference](https://paystack.com/docs/api)
 - [Supabase Documentation](https://supabase.com/docs)
 
@@ -367,5 +373,5 @@ Refer to project documentation in order:
 3. [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md) - System design
 4. [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md) - Find specific topics
 
-**Last Updated:** January 2026  
+**Last Updated:** April 2026  
 **Status:** Production Ready ✅

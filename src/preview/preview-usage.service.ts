@@ -1,19 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
-import { PreviewUsage } from '../entities/preview-usage.entity';
+import { PreviewUsage } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class PreviewUsageService {
-  constructor(
-    @InjectRepository(PreviewUsage)
-    private readonly previewUsageRepository: Repository<PreviewUsage>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async hasUserUsedPreview(userId: string): Promise<boolean> {
-    const usage = await this.previewUsageRepository.findOne({
+    const usage = await this.prisma.previewUsage.findFirst({
       where: { userId },
-      order: { usedAt: 'DESC' },
+      orderBy: { usedAt: 'desc' },
     });
     return !!usage;
   }
@@ -23,45 +19,43 @@ export class PreviewUsageService {
     source?: string;
     ipAddress?: string;
     userAgent?: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   }): Promise<PreviewUsage> {
-    // Check if already used recently (within last 24 hours)
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    
-    const recentUsage = await this.previewUsageRepository.findOne({
+
+    const recentUsage = await this.prisma.previewUsage.findFirst({
       where: {
         userId: data.userId,
-        usedAt: MoreThan(twentyFourHoursAgo),
+        usedAt: { gt: twentyFourHoursAgo },
       },
     });
 
     if (recentUsage) {
-      return recentUsage; // Already used preview recently
+      return recentUsage;
     }
 
-    const previewUsage = this.previewUsageRepository.create({
-      userId: data.userId,
-      source: data.source || 'manual_unlock',
-      ipAddress: data.ipAddress,
-      userAgent: data.userAgent,
-      metadata: data.metadata,
+    return this.prisma.previewUsage.create({
+      data: {
+        userId: data.userId,
+        source: data.source ?? 'manual_unlock',
+        ipAddress: data.ipAddress,
+        userAgent: data.userAgent,
+        metadata: data.metadata as object | undefined,
+      },
     });
-
-    return this.previewUsageRepository.save(previewUsage);
   }
 
   async getPreviewUsageHistory(userId: string): Promise<PreviewUsage[]> {
-    return this.previewUsageRepository.find({
+    return this.prisma.previewUsage.findMany({
       where: { userId },
-      order: { usedAt: 'DESC' },
+      orderBy: { usedAt: 'desc' },
     });
   }
 
-  // Add this method to get the last preview usage
   async getLastPreviewUsage(userId: string): Promise<PreviewUsage | null> {
-    return this.previewUsageRepository.findOne({
+    return this.prisma.previewUsage.findFirst({
       where: { userId },
-      order: { usedAt: 'DESC' },
+      orderBy: { usedAt: 'desc' },
     });
   }
 
@@ -70,11 +64,11 @@ export class PreviewUsageService {
     reason?: string;
     lastUsage?: Date;
   }> {
-    const usage = await this.hasUserUsedPreview(userId);
-    
-    if (usage) {
+    const used = await this.hasUserUsedPreview(userId);
+
+    if (used) {
       const lastUsage = await this.getLastPreviewUsage(userId);
-      
+
       return {
         canAccess: false,
         reason: 'preview_already_used',
@@ -85,15 +79,14 @@ export class PreviewUsageService {
     return { canAccess: true };
   }
 
-  // Optional: Get preview usage statistics
   async getPreviewUsageStats(): Promise<{
     totalUses: number;
     bySource: Record<string, number>;
     byDay: Record<string, number>;
     uniqueUsers: number;
   }> {
-    const allUsage = await this.previewUsageRepository.find();
-    
+    const allUsage = await this.prisma.previewUsage.findMany();
+
     const stats = {
       totalUses: allUsage.length,
       bySource: {} as Record<string, number>,
@@ -101,16 +94,13 @@ export class PreviewUsageService {
       uniqueUsers: new Set<string>(),
     };
 
-    allUsage.forEach(usage => {
-      // Count by source
+    allUsage.forEach((usage) => {
       const source = usage.source || 'unknown';
       stats.bySource[source] = (stats.bySource[source] || 0) + 1;
-      
-      // Count by day
+
       const day = usage.usedAt.toISOString().split('T')[0];
       stats.byDay[day] = (stats.byDay[day] || 0) + 1;
-      
-      // Count unique users
+
       stats.uniqueUsers.add(usage.userId);
     });
 
@@ -120,8 +110,7 @@ export class PreviewUsageService {
     };
   }
 
-  // Optional: Reset preview usage for testing/admin purposes
   async resetPreviewUsage(userId: string): Promise<void> {
-    await this.previewUsageRepository.delete({ userId });
+    await this.prisma.previewUsage.deleteMany({ where: { userId } });
   }
 }

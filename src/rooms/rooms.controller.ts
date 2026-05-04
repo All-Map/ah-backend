@@ -22,22 +22,23 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { CreateRoomDto, RoomsService } from './rooms.service';
+import { RoomsService } from './rooms.service';
 import {
+  CreateRoomDto,
   RoomFilterDto,
   BulkCreateRoomDto,
   UpdateOccupancyDto,
   BulkDeleteRoomsDto,
+  BulkUpdateStatusDto,
   ChangeRoomStatusDto,
   RoomSearchDto,
   UpdateRoomDto,
 } from './dto/rooms.dto';
-import { Room, RoomStatus } from 'src/entities/room.entity';
+import { Room, RoomType } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from 'src/entities/user.entity';
-import { RoomType } from 'src/entities/room-type.entity';
+import { UserRole } from '@prisma/client';
 import { CreateRoomTypeDto } from './dto/create-room-type.dto';
 
 @ApiTags('Rooms')
@@ -48,12 +49,11 @@ export class RoomsController {
   constructor(private readonly roomsService: RoomsService) {}
 
   @Post('create')
-  // @Roles(UserRole.SUPER_ADMIN, UserRole.SUPER_ADMIN)
+  // @Roles(UserRole.super_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Create a new room' })
   @ApiResponse({ 
     status: HttpStatus.CREATED, 
-    description: 'Room created successfully',
-    type: Room 
+    description: 'Room created successfully'
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -72,8 +72,7 @@ export class RoomsController {
   @ApiOperation({ summary: 'Create multiple rooms at once' })
   @ApiResponse({ 
     status: HttpStatus.CREATED, 
-    description: 'Rooms created successfully',
-    type: [Room] 
+    description: 'Rooms created successfully'
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -94,7 +93,7 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
 }
 
   @Get()
-  // @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN, UserRole.STUDENT)
+  // @Roles(UserRole.hostel_admin, UserRole.super_admin, UserRole.student)
   @ApiOperation({ summary: 'Get all rooms with filtering and pagination' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -105,12 +104,11 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   }
 
   @Get('search')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN, UserRole.STUDENT)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin, UserRole.student)
   @ApiOperation({ summary: 'Search rooms by term' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Search results retrieved successfully',
-    type: [Room] 
+    description: 'Search results retrieved successfully'
   })
   async searchRooms(@Query() searchDto: RoomSearchDto): Promise<Room[]> {
     const { searchTerm, ...filters } = searchDto;
@@ -118,7 +116,7 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   }
 
   @Get('available/:hostelId')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN, UserRole.STUDENT)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin, UserRole.student)
   @ApiOperation({ summary: 'Get available rooms for a hostel' })
   @ApiParam({ name: 'hostelId', description: 'Hostel ID' })
   @ApiQuery({ 
@@ -128,8 +126,7 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Available rooms retrieved successfully',
-    type: [Room] 
+    description: 'Available rooms retrieved successfully'
   })
   async getAvailableRooms(
     @Param('hostelId', ParseUUIDPipe) hostelId: string,
@@ -151,13 +148,12 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   }
 
   @Get('hostel/:hostelId')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN, UserRole.STUDENT)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin, UserRole.student)
   @ApiOperation({ summary: 'Get all rooms for a specific hostel' })
   @ApiParam({ name: 'hostelId', description: 'Hostel ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Hostel rooms retrieved successfully',
-    type: [Room] 
+    description: 'Hostel rooms retrieved successfully'
   })
   async getRoomsByHostelId(
     @Param('hostelId', ParseUUIDPipe) hostelId: string,
@@ -167,13 +163,12 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   }
 
   @Get(':id')
-  // @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN, UserRole.STUDENT)
+  // @Roles(UserRole.hostel_admin, UserRole.super_admin, UserRole.student)
   @ApiOperation({ summary: 'Get room by ID' })
   @ApiParam({ name: 'id', description: 'Room ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Room retrieved successfully',
-    type: Room 
+    description: 'Room retrieved successfully'
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -189,8 +184,7 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   @ApiParam({ name: 'id', description: 'Room ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Room updated successfully',
-    type: Room 
+    description: 'Room updated successfully'
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -213,8 +207,7 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   @ApiParam({ name: 'id', description: 'Room ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Room occupancy updated successfully',
-    type: Room 
+    description: 'Room occupancy updated successfully'
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -237,8 +230,7 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   @ApiParam({ name: 'id', description: 'Room ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Room status updated successfully',
-    type: Room 
+    description: 'Room status updated successfully'
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -296,10 +288,28 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
     return { message: 'Rooms deleted successfully' };
   }
 
+  @Patch('bulk/status')
+  @ApiOperation({ summary: 'Update status of multiple rooms' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Room statuses updated successfully' 
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Some rooms not found' 
+  })
+  @ApiResponse({ 
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Cannot set rooms to available while they have occupants' 
+  })
+  async bulkUpdateStatus(@Body() bulkUpdateStatusDto: BulkUpdateStatusDto) {
+    return await this.roomsService.bulkUpdateStatus(bulkUpdateStatusDto.ids, bulkUpdateStatusDto.status);
+  }
+
   // Additional utility endpoints
 
   @Get('hostel/:hostelId/floors')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN, UserRole.STUDENT)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin, UserRole.student)
   @ApiOperation({ summary: 'Get available floors for a hostel' })
   @ApiParam({ name: 'hostelId', description: 'Hostel ID' })
   @ApiResponse({ 
@@ -308,7 +318,7 @@ async create(@Body() createRoomTypeDto: CreateRoomTypeDto): Promise<RoomType> {
   })
   async getHostelFloors(@Param('hostelId', ParseUUIDPipe) hostelId: string): Promise<number[]> {
     const rooms = await this.roomsService.getRoomsByHostelId(hostelId);
-    const floors = [...new Set(rooms.map(room => room.floor).filter(floor => floor !== null))];
+    const floors = [...new Set(rooms.map(room => room.floor).filter((floor): floor is number => floor !== null))];
     return floors.sort((a, b) => a - b);
   }
 

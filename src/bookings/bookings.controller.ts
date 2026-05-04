@@ -38,12 +38,11 @@ import {
   BookingReportFilterDto,
   VerifyPaymentDto
 } from './dto/booking.dto';
-import { Booking } from '../entities/booking.entity';
-import { Payment } from '../entities/payment.entity';
+import type { Booking, Payment } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from '../entities/user.entity';
+import { UserRole } from '@prisma/client';
 import { PaystackService } from 'src/paystack/paystack.service';
 import { DepositsService } from 'src/deposits/deposits.service';
 
@@ -59,7 +58,7 @@ export class BookingsController {
   ) {}
 
   @Post('verify-payment')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Verify Paystack payment before creating booking' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -79,7 +78,7 @@ export class BookingsController {
   }
 
   @Get('booking-fee')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get current booking fee amount' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -94,12 +93,11 @@ export class BookingsController {
   }
 
   @Post('create')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Create a new booking with verified payment' })
   @ApiResponse({ 
     status: HttpStatus.CREATED, 
     description: 'Booking created successfully',
-    type: Booking 
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -115,12 +113,11 @@ export class BookingsController {
   }
 
   @Post('create-with-deposit-balance')
-@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
 @ApiOperation({ summary: 'Create booking using deposit balance for booking fee' })
 @ApiResponse({ 
   status: HttpStatus.CREATED, 
   description: 'Booking created successfully with deposit deduction',
-  type: Booking 
 })
 @UsePipes(new ValidationPipe({ transform: true }))
 async createBookingWithDepositBalance(
@@ -143,7 +140,7 @@ async createBookingWithDepositBalance(
 
 // In bookings.controller.ts
 @Get('deposit-check')
-@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
 @ApiOperation({ summary: 'Check if user can pay booking fee from deposit' })
 async checkDepositForBooking(@Request() req: any) {
   const userId = req.user.id;
@@ -164,7 +161,7 @@ async checkDepositForBooking(@Request() req: any) {
 }
 
  @Post('admin-create')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Create a new booking with verified payment (Admin)' })
   @UsePipes(new ValidationPipe({ 
     transform: true,
@@ -201,7 +198,7 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get()
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get all bookings with filtering and pagination' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -212,13 +209,12 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get('search')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Search bookings' })
   @ApiQuery({ name: 'q', description: 'Search term' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Search results retrieved successfully',
-    type: [Booking] 
   })
   async searchBookings(
     @Query('q') searchTerm: string,
@@ -228,13 +224,12 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get('student/:studentId')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get bookings by student ID' })
   @ApiParam({ name: 'studentId', description: 'Student ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Student bookings retrieved successfully',
-    type: [Booking] 
   })
   async getBookingsByStudent(
     @Param('studentId', ParseUUIDPipe) studentId: string
@@ -243,13 +238,12 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get('hostel/:hostelId')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get bookings by hostel ID' })
   @ApiParam({ name: 'hostelId', description: 'Hostel ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Hostel bookings retrieved successfully',
-    type: [Booking] 
   })
   async getBookingsByHostel(
     @Param('hostelId', ParseUUIDPipe) hostelId: string,
@@ -259,7 +253,7 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get('statistics')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get booking statistics' })
   @ApiQuery({ name: 'hostelId', required: false, description: 'Filter by hostel ID' })
   @ApiResponse({ 
@@ -271,7 +265,7 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get('reports')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Generate booking reports' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -282,13 +276,12 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get(':id')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get booking by ID' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Booking retrieved successfully',
-    type: Booking 
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -299,25 +292,23 @@ async checkDepositForBooking(@Request() req: any) {
   }
 
   @Get(':id/payments')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get booking payments' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Booking payments retrieved successfully',
-    type: [Payment] 
   })
   async getBookingPayments(@Param('id', ParseUUIDPipe) id: string): Promise<Payment[]> {
     return await this.bookingsService.getBookingPayments(id);
   }
 
   @Post('create-with-deposit')
-@Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+@Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
 @ApiOperation({ summary: 'Create booking with automatic deposit deduction' })
 @ApiResponse({ 
   status: HttpStatus.CREATED, 
   description: 'Booking created successfully with deposit deduction',
-  type: Booking 
 })
 @ApiResponse({ 
   status: HttpStatus.BAD_REQUEST, 
@@ -352,13 +343,12 @@ async createBookingWithDeposit(
 }
 
   @Put(':id')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Update booking details' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Booking updated successfully',
-    type: Booking 
   })
   @ApiResponse({ 
     status: HttpStatus.NOT_FOUND, 
@@ -377,13 +367,12 @@ async createBookingWithDeposit(
   }
 
   @Patch(':id/confirm')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Confirm a pending booking' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Booking confirmed successfully',
-    type: Booking 
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -397,13 +386,12 @@ async createBookingWithDeposit(
   }
 
   @Patch(':id/cancel')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Cancel a booking' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Booking cancelled successfully',
-    type: Booking 
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -418,13 +406,12 @@ async createBookingWithDeposit(
   }
 
   @Patch(':id/checkin')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Check in a student' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Student checked in successfully',
-    type: Booking 
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -438,13 +425,12 @@ async createBookingWithDeposit(
   }
 
   @Patch(':id/checkout')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Check out a student' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
     description: 'Student checked out successfully',
-    type: Booking 
   })
   @ApiResponse({ 
     status: HttpStatus.BAD_REQUEST, 
@@ -458,7 +444,7 @@ async createBookingWithDeposit(
   }
 
   @Post(':id/room-payments')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Record room balance payment for booking' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
@@ -486,7 +472,7 @@ async createBookingWithDeposit(
   }
 
   @Post(':id/payments')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Record a payment for booking (legacy endpoint)' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
@@ -510,7 +496,7 @@ async createBookingWithDeposit(
   }
 
   @Delete(':id')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Delete a booking (Admin only)' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 
@@ -531,7 +517,7 @@ async createBookingWithDeposit(
   }
 
   @Get('hostel/:hostelId/calendar')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Get booking calendar for a hostel' })
   @ApiParam({ name: 'hostelId', description: 'Hostel ID' })
   @ApiQuery({ name: 'month', required: false, description: 'Month (YYYY-MM)' })
@@ -584,7 +570,7 @@ async createBookingWithDeposit(
   }
 
   @Get('hostel/:hostelId/availability')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Check room availability for dates' })
   @ApiParam({ name: 'hostelId', description: 'Hostel ID' })
   @ApiQuery({ name: 'checkIn', description: 'Check-in date (YYYY-MM-DD)' })
@@ -600,58 +586,16 @@ async createBookingWithDeposit(
     @Query('checkOut') checkOut: string,
     @Query('roomTypeId') roomTypeId?: string
   ) {
-    // Get all rooms for the hostel
-    let rooms = await this.bookingsService['roomRepository'].find({
-      where: { hostelId, ...(roomTypeId && { roomTypeId }) },
-      relations: ['roomType']
-    });
-
-    // Get conflicting bookings
-    const conflictingBookings = await this.bookingsService.getBookings({
+    return await this.bookingsService.checkAvailability(
       hostelId,
-      checkInFrom: checkIn,
-      checkInTo: checkOut,
-      limit: 1000
-    });
-
-    const bookedRoomIds = new Set(
-      conflictingBookings.bookings
-        .filter(booking => ['confirmed', 'checked_in'].includes(booking.status))
-        .map(booking => booking.roomId)
+      checkIn,
+      checkOut,
+      roomTypeId
     );
-
-    const availableRooms = rooms.filter(room => 
-      !bookedRoomIds.has(room.id) && room.isAvailable()
-    );
-
-    return {
-      checkInDate: checkIn,
-      checkOutDate: checkOut,
-      totalRooms: rooms.length,
-      availableRooms: availableRooms.length,
-      bookedRooms: bookedRoomIds.size,
-      bookingFee: this.bookingsService.getBookingFee(),
-      rooms: availableRooms.map(room => ({
-        id: room.id,
-        roomNumber: room.roomNumber,
-        floor: room.floor,
-        maxOccupancy: room.maxOccupancy,
-        currentOccupancy: room.currentOccupancy,
-        roomType: {
-          id: room.roomType.id,
-          name: room.roomType.name,
-          pricePerSemester: room.roomType.pricePerSemester,
-          pricePerMonth: room.roomType.pricePerMonth,
-          pricePerWeek: room.roomType.pricePerWeek,
-          capacity: room.roomType.capacity,
-          amenities: room.roomType.amenities
-        }
-      }))
-    };
   }
 
   @Post('bulk-checkin')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Bulk check-in multiple bookings' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -678,7 +622,7 @@ async createBookingWithDeposit(
   }
 
   @Post('bulk-checkout')
-  @Roles(UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Bulk check-out multiple bookings' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -705,7 +649,7 @@ async createBookingWithDeposit(
   }
 
   @Patch('overdue/mark')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.super_admin)
   @ApiOperation({ summary: 'Mark overdue bookings (System operation)' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
@@ -753,7 +697,7 @@ async createBookingWithDeposit(
 
   // Payment status check endpoint
   @Get(':id/payment-status')
-  @Roles(UserRole.STUDENT, UserRole.HOSTEL_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.student, UserRole.hostel_admin, UserRole.super_admin)
   @ApiOperation({ summary: 'Check payment status for a booking' })
   @ApiParam({ name: 'id', description: 'Booking ID' })
   @ApiResponse({ 

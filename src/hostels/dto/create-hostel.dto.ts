@@ -78,8 +78,8 @@ class BankDetailsDto {
   account_number: string;
 
   @IsString()
-  @IsNotEmpty()
-  branch: string;
+  @IsOptional()
+  branch?: string;
 }
 
 export class MomoDetailsDto {
@@ -117,13 +117,12 @@ export class CreateHostelDto {
   @IsNotEmpty()
   SecondaryNumber: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  adminId: string;
+  adminId?: string;
 
-  @ValidateNested()
-  @Type(() => LocationDto)
-  location: LocationDto;
+  @IsOptional()
+  location?: any;
 
   @IsString()
   @IsNotEmpty()
@@ -133,14 +132,11 @@ export class CreateHostelDto {
   @IsOptional()
   schoolId?: string;
 
-  @IsArray()
-  @IsString({ each: true })
   @IsOptional()
-  images?: string[];
+  images?: any;
 
-  @ValidateNested()
-  @Type(() => AmenitiesDto)
-  amenities: AmenitiesDto;
+  @IsOptional()
+  amenities?: any;
 
   // New pricing and payment fields
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -151,19 +147,15 @@ export class CreateHostelDto {
   @IsEnum(PaymentMethod)
   payment_method: PaymentMethod;
 
-  @ValidateIf(o => o.payment_method === PaymentMethod.BANK || o.payment_method === PaymentMethod.BOTH)
-  @ValidateNested()
-  @Type(() => BankDetailsDto)
-  bank_details?: BankDetailsDto;
+  @IsOptional()
+  bank_details?: any;
 
-  @ValidateIf(o => o.payment_method === PaymentMethod.MOMO || o.payment_method === PaymentMethod.BOTH)
-  @ValidateNested()
-  @Type(() => MomoDetailsDto)
-  momo_details?: MomoDetailsDto;
+  @IsOptional()
+  momo_details?: any;
 
   // Additional hostel information
   @IsNumber()
-  @Min(1)
+  @Min(0)
   @IsOptional()
   @Transform(({ value }) => parseInt(value))
   max_occupancy?: number;
@@ -172,10 +164,8 @@ export class CreateHostelDto {
   @IsOptional()
   house_rules?: string;
 
-  @IsArray()
-  @IsString({ each: true })
   @IsOptional()
-  nearby_facilities?: string[];
+  nearby_facilities?: any;
 
   @IsString()
   @IsOptional()

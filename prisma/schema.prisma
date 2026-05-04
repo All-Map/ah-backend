@@ -1,0 +1,507 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Access {
+  id                 String   @id(map: "PK_e386259e6046c45ab06811584ed") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId             String   @map("user_id") @db.Uuid
+  expiresAt          DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  source             String   @db.VarChar
+  paystackReference  String?  @unique(map: "UQ_48e567d9242153cc86578dff799") @map("paystack_reference") @db.VarChar
+  user               User     @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_2d29a8162ec942b00d044d8e170")
+
+  @@map("access")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model AdminVerification {
+  id                   String                       @id(map: "PK_c4b4f0fde49ce7706312ae091ae") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  firstName            String                       @db.VarChar
+  lastName             String                       @db.VarChar
+  mobileNumber         String                       @db.VarChar
+  alternatePhone       String?                      @db.VarChar
+  idType               String                       @db.VarChar
+  otherIdType          String?                      @db.VarChar
+  idNumber             String                       @db.VarChar
+  idDocuments          String[]                     @map("id_documents")
+  termsAccepted        Boolean                      @default(false)
+  hostelProofType      String                       @db.VarChar
+  hostelProofDocuments String[]                     @map("hostel_proof_documents")
+  status               AdminVerificationStatus      @default(pending)
+  createdAt            DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  userId               String                       @map("user_id") @db.Uuid
+  reviewedById         String?                      @map("reviewed_by_id") @db.VarChar
+  reviewedAt           DateTime?                    @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason      String?                      @map("rejection_reason") @db.VarChar
+  reviewedBy           String?                      @map("reviewed_by") @db.Uuid
+  user                 User                         @relation("admin_verifications_user_idTousers", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_0ac87a1324389b4b113bd90ea46")
+  reviewer             User?                        @relation("admin_verifications_reviewed_byTousers", fields: [reviewedBy], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_b91e914ea2a55b905227262382f")
+
+  @@map("admin_verifications")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Booking {
+  id                  String               @id(map: "PK_bee6805982cc1e248e94ce94957") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  hostelId            String               @map("hostel_id") @db.Uuid
+  roomId              String               @map("room_id") @db.Uuid
+  studentId           String?              @map("student_id") @db.Uuid
+  studentName         String               @map("student_name") @db.VarChar(100)
+  studentEmail        String               @map("student_email") @db.VarChar
+  studentPhone        String               @map("student_phone") @db.VarChar(20)
+  bookingType         BookingType          @map("booking_type")
+  status              BookingStatus        @default(pending)
+  paymentStatus       PaymentStatusEnum    @default(pending) @map("payment_status")
+  checkInDate         DateTime             @map("check_in_date") @db.Date
+  checkOutDate        DateTime             @map("check_out_date") @db.Date
+  totalAmount         Decimal              @map("total_amount") @db.Decimal(10, 2)
+  amountPaid          Decimal              @default(0) @map("amount_paid") @db.Decimal(10, 2)
+  depositAmount       Decimal              @default(0) @map("deposit_amount") @db.Decimal(10, 2)
+  amountDue           Decimal              @default(0) @map("amount_due") @db.Decimal(10, 2)
+  paymentDueDate      DateTime?            @map("payment_due_date") @db.Date
+  bookingFee          Decimal              @default(70) @map("booking_fee") @db.Decimal(10, 2)
+  bookingFeePaid      Boolean              @default(false) @map("booking_fee_paid")
+  autoCancelAt        DateTime?            @map("auto_cancel_at") @db.Timestamptz(6)
+  autoCancelNotified  Boolean              @default(false) @map("auto_cancel_notified")
+  paymentReference    String?              @map("payment_reference") @db.VarChar
+  bookingFeePaidAt    DateTime?            @map("booking_fee_paid_at") @db.Timestamptz(6)
+  specialRequests     String?              @map("special_requests")
+  notes               String?
+  emergencyContacts   Json                 @default("[]") @map("emergency_contacts")
+  confirmedAt         DateTime?            @map("confirmed_at") @db.Timestamptz(6)
+  checkedInAt         DateTime?            @map("checked_in_at") @db.Timestamptz(6)
+  checkedOutAt        DateTime?            @map("checked_out_at") @db.Timestamptz(6)
+  cancelledAt         DateTime?            @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason  String?              @map("cancellation_reason")
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  room                Room                 @relation(fields: [roomId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_0b0fc32fe6bd0119e281628df7a")
+  hostel              Hostel               @relation(fields: [hostelId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_7e07c686f0d463b6d330737266b")
+  student             User?                @relation(fields: [studentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "FK_bookings_student")
+  payments            Payment[]
+  reviews             Review[]
+
+  @@map("bookings")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Deposit {
+  id                 String           @id(map: "PK_f49ba0cd446eaf7abb4953385d9") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId             String           @map("user_id") @db.Uuid
+  amount             Decimal          @db.Decimal(10, 2)
+  status             DepositStatus    @default(pending)
+  depositType        DepositType      @default(account_credit)
+  paymentReference   String           @unique(map: "UQ_cb87c0498d09310299fe77fa37d") @map("payment_reference") @db.VarChar
+  paystackReference  String?          @map("paystack_reference") @db.VarChar
+  transactionId      String?          @map("transaction_id") @db.VarChar
+  notes              String?
+  paymentDetails     Json             @default("{}") @map("payment_details")
+  paymentDate        DateTime?        @map("payment_date") @db.Timestamptz(6)
+  verifiedAt         DateTime?        @map("verified_at") @db.Timestamptz(6)
+  expiresAt          DateTime?        @map("expires_at") @db.Timestamptz(6)
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user               User             @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_109b9d3209e5c344dae2ca8f221")
+
+  @@map("deposits")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Hostel {
+  id                 String                  @id(map: "PK_2d7d9386d693449e9857576d246") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name               String                  @db.VarChar
+  email              String                  @db.VarChar
+  phone              String                  @db.VarChar
+  secondaryNumber    String                  @map("SecondaryNumber") @db.VarChar
+  description        String
+  location           Unsupported("geometry")?
+  address            String
+  adminId            String                  @map("admin_id") @db.VarChar
+  images             Json                    @default("[]")
+  amenities          Json                    @default("{}")
+  basePrice          Decimal                 @map("base_price") @db.Decimal(10, 2)
+  paymentMethod      HostelPaymentMethod     @default(both) @map("payment_method")
+  bankDetails        Json?                   @map("bank_details")
+  momoDetails        Json?                   @map("momo_details")
+  maxOccupancy       Int                     @default(0) @map("max_occupancy")
+  houseRules         String?                 @map("house_rules")
+  nearbyFacilities   Json                    @default("[]") @map("nearby_facilities")
+  checkInTime        DateTime?               @map("check_in_time") @db.Time(6)
+  checkOutTime       DateTime?               @map("check_out_time") @db.Time(6)
+  isVerified         Boolean                 @default(false) @map("is_verified")
+  isActive           Boolean                 @default(true) @map("is_active")
+  acceptingBookings  Boolean                 @default(true) @map("accepting_bookings")
+  rating             Decimal                 @default(0) @map("rating") @db.Decimal(2, 1)
+  totalReviews       Int                     @default(0) @map("total_reviews")
+  createdAt          DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                @default(now()) @map("updated_at") @db.Timestamptz(6)
+  bookings           Booking[]
+  reviews            Review[]
+  roomTypes          RoomType[]
+  rooms              Room[]
+
+  @@map("hostels")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Payment {
+  id              String              @id(map: "PK_197ab7af18c93fbb0c9b28b4a59") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  bookingId       String              @map("booking_id") @db.Uuid
+  amount          Decimal             @db.Decimal(10, 2)
+  paymentMethod   PaymentMethodEnum   @map("payment_method")
+  paymentType     PaymentTypeEnum     @map("payment_type")
+  transactionRef  String?             @map("transaction_ref") @db.VarChar
+  notes           String?
+  paymentDate     DateTime            @default(now()) @map("payment_date") @db.Timestamptz(6)
+  receivedBy      String?             @map("received_by") @db.VarChar
+  metadata        Json                @default("{}")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  booking         Booking             @relation(fields: [bookingId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_e86edf76dc2424f123b9023a2b2")
+
+  @@map("payments")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model PreviewUsage {
+  id         String   @id(map: "PK_e68aaea9aff8f982c368cf4ccf3") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  usedAt     DateTime @default(now()) @map("used_at") @db.Timestamptz(6)
+  source     String?  @db.VarChar
+  ipAddress  String?  @map("ip_address") @db.VarChar
+  userAgent  String?  @map("user_agent") @db.VarChar
+  metadata   Json?
+  user       User     @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_46417797a1a9359d45f9f48e64c")
+
+  @@map("preview_usage")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Review {
+  id                  String         @id(map: "PK_231ae565c273ee700b283f15c1d") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  hostelId            String         @map("hostel_id") @db.Uuid
+  bookingId           String         @map("booking_id") @db.Uuid
+  studentId           String         @map("student_id") @db.VarChar
+  studentName         String         @map("student_name") @db.VarChar(100)
+  rating              Int
+  reviewText          String         @map("review_text")
+  detailedRatings     Json           @default("{}") @map("detailed_ratings")
+  status              ReviewStatus   @default(approved)
+  helpfulVotes        Json           @default("[]") @map("helpful_votes")
+  helpfulCount        Int            @default(0) @map("helpful_count")
+  images              Json           @default("[]")
+  adminNotes          String?        @map("admin_notes")
+  moderatedBy         String?        @map("moderated_by") @db.VarChar
+  moderatedAt         DateTime?      @map("moderated_at") @db.Timestamptz(6)
+  hostelResponse      String?        @map("hostel_response")
+  hostelRespondedAt   DateTime?      @map("hostel_responded_at") @db.Timestamptz(6)
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  hostel              Hostel         @relation(fields: [hostelId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_6e9f2144dea26fb1625efdeeabc")
+  booking             Booking        @relation(fields: [bookingId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_bbd6ac6e3e6a8f8c6e0e8692d63")
+
+  @@unique([hostelId, studentId], map: "IDX_91ff163ec18dd9eeb35ec38451")
+  @@map("reviews")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model RoomType {
+  id               String         @id(map: "PK_b6e1d0a9b67d4b9fbff9c35ab69") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  hostelId         String         @map("hostel_id") @db.Uuid
+  name             String         @db.VarChar(100)
+  description      String?
+  pricePerSemester Decimal        @map("price_per_semester") @db.Decimal(10, 2)
+  pricePerMonth    Decimal        @map("price_per_month") @db.Decimal(10, 2)
+  pricePerWeek     Decimal?       @map("price_per_week") @db.Decimal(10, 2)
+  capacity         Int            @default(1)
+  gender           RoomGender     @default(mixed)
+  amenities        Json           @default("[]")
+  totalRooms       Int            @default(0) @map("total_rooms")
+  availableRooms   Int            @default(0) @map("available_rooms")
+  images           Json           @default("[]")
+  allowedGenders   String[]       @default(["mixed"]) @map("allowed_genders")
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  hostel           Hostel         @relation(fields: [hostelId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_e29f9979fe405d7d5bc0e868b09")
+  rooms            Room[]
+
+  @@map("room_types")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Room {
+  id               String     @id(map: "PK_0368a2d7c215f2d0458a54933f2") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  hostelId         String     @map("hostel_id") @db.Uuid
+  roomTypeId       String     @map("room_type_id") @db.Uuid
+  roomNumber       String     @map("room_number") @db.VarChar(20)
+  floor            Int?
+  status           String
+  currentOccupancy Int        @default(0) @map("current_occupancy")
+  maxOccupancy     Int        @map("max_occupancy")
+  notes            String?
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+  bookings         Booking[]
+  roomType         RoomType   @relation(fields: [roomTypeId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_8a380bdc519b8701daf0ec62da0")
+  hostel           Hostel     @relation(fields: [hostelId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_faf160c9b04ef230f7b317eab9f")
+
+  @@map("rooms")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model School {
+  id         String                  @id(map: "PK_95b932e47ac129dd8e23a0db548") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name       String                  @db.VarChar
+  domain     String                  @db.VarChar
+  location   Unsupported("geometry")
+  createdAt  DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("schools")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model User {
+  id                           String               @id(map: "PK_a3ffb1c0c8416b9fc6f907b7433") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  email                        String               @unique(map: "UQ_97672ac88f789774dd47f7c8be3") @db.VarChar
+  name                         String?              @db.VarChar
+  phone                        String?              @db.VarChar
+  gender                       UserGender?
+  passwordHash                 String               @map("password_hash") @db.VarChar
+  isVerified                   Boolean              @default(false) @map("is_verified")
+  onboardingCompleted          Boolean              @default(false) @map("onboarding_completed")
+  verificationToken            String?              @map("verification_token") @db.VarChar
+  passwordResetToken           String?              @map("password_reset_token") @db.VarChar
+  resetTokenExpiry             DateTime?            @map("reset_token_expiry") @db.Timestamp(6)
+  verificationTokenExpiresAt   DateTime?            @map("verification_token_expires_at") @db.Timestamptz(6)
+  verifiedAt                   DateTime?            @map("verified_at") @db.Date
+  status                       UserStatus           @default(unverified)
+  role                         UserRole             @default(student)
+  termsAccepted                Boolean              @default(false) @map("terms_accepted")
+  termsAcceptedAt              DateTime?            @map("terms_accepted_at") @db.Timestamp(6)
+  createdAt                    DateTime?            @map("created_at") @db.Timestamp(6)
+  schoolId                     String?              @map("school_id") @db.VarChar
+  emergencyContactName         String?              @map("emergency_contact_name") @db.VarChar
+  emergencyContactPhone        String?              @map("emergency_contact_phone") @db.VarChar
+  emergencyContactRelationship String?              @map("emergency_contact_relationship") @db.VarChar
+  emergencyContactEmail        String?              @map("emergency_contact_email") @db.VarChar
+  googleId                     String?              @map("google_id")
+  lastOnboardingStep           Int?                 @default(1) @map("last_onboarding_step")
+  access                       Access[]
+  verificationRequests         AdminVerification[]  @relation("admin_verifications_user_idTousers")
+  reviewedVerifications        AdminVerification[]  @relation("admin_verifications_reviewed_byTousers")
+  deposits                     Deposit[]
+  previewUsage                 PreviewUsage[]
+  feedbacks                    Feedback[]
+  publicFeedbacks              PublicFeedback[]
+  bookings                     Booking[]
+
+  @@map("users")
+}
+
+model Feedback {
+  id          String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId      String         @map("user_id") @db.Uuid
+  subject     String         @db.VarChar
+  message     String
+  category    FeedbackCategory
+  status      FeedbackStatus @default(pending)
+  adminNotes  String?        @map("admin_notes")
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("feedback")
+}
+
+model PublicFeedback {
+  id          String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name        String                 @db.VarChar
+  email       String                 @db.VarChar
+  subject     String                 @db.VarChar
+  message     String
+  category    PublicFeedbackCategory
+  status      PublicFeedbackStatus   @default(pending)
+  adminNotes  String?                @map("admin_notes")
+  ipAddress   String?                @map("ip_address") @db.VarChar
+  userAgent   String?                @map("user_agent") @db.VarChar
+  responded   Boolean                @default(false)
+  respondedAt DateTime?              @map("responded_at") @db.Timestamptz(6)
+  userId      String?                @map("user_id") @db.Uuid
+  createdAt   DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime               @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user        User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("public_feedback")
+}
+
+// ─── ENUMS ──────────────────────────────────────────────────────
+
+enum AdminVerificationStatus {
+  pending
+  approved
+  rejected
+
+  @@map("admin_verifications_status_enum")
+}
+
+enum BookingType {
+  semester
+  monthly
+  weekly
+
+  @@map("bookings_booking_type_enum")
+}
+
+enum PaymentStatusEnum {
+  pending
+  partial
+  paid
+  cancelled
+  overdue
+
+  @@map("bookings_payment_status_enum")
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  checked_in
+  checked_out
+  cancelled
+  no_show
+
+  @@map("bookings_status_enum")
+}
+
+enum DepositType {
+  booking_deposit
+  room_balance
+  account_credit
+
+  @@map("deposits_deposittype_enum")
+}
+
+enum DepositStatus {
+  pending
+  completed
+  failed
+  refunded
+
+  @@map("deposits_status_enum")
+}
+
+enum HostelPaymentMethod {
+  bank
+  momo
+  both
+
+  @@map("hostels_payment_method_enum")
+}
+
+enum PaymentMethodEnum {
+  cash
+  bank_transfer
+  mobile_money
+  card
+  cheque
+  account_credit
+
+  @@map("payments_payment_method_enum")
+}
+
+enum PaymentTypeEnum {
+  booking_payment
+  deposit
+  refund
+  penalty
+
+  @@map("payments_payment_type_enum")
+}
+
+enum ReviewStatus {
+  pending
+  approved
+  rejected
+  flagged
+
+  @@map("reviews_status_enum")
+}
+
+enum RoomGender {
+  male
+  female
+  mixed
+
+  @@map("room_types_gender_enum")
+}
+
+enum UserGender {
+  male
+  female
+  other
+  prefer_not_to_say
+
+  @@map("users_gender_enum")
+}
+
+enum UserRole {
+  student
+  hostel_admin
+  super_admin
+
+  @@map("users_role_enum")
+}
+
+enum UserStatus {
+  unverified
+  pending
+  verified
+
+  @@map("users_status_enum")
+}
+
+enum FeedbackCategory {
+  general
+  bug
+  feature
+  feedback
+  support
+
+  @@map("feedback_category_enum")
+}
+
+enum FeedbackStatus {
+  pending
+  reviewed
+  resolved
+  archived
+
+  @@map("feedback_status_enum")
+}
+
+enum PublicFeedbackCategory {
+  general
+  bug
+  feature
+  feedback
+  support
+
+  @@map("public_feedback_category_enum")
+}
+
+enum PublicFeedbackStatus {
+  pending
+  reviewed
+  resolved
+  archived
+
+  @@map("public_feedback_status_enum")
+}

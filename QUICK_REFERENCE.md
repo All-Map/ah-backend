@@ -15,7 +15,7 @@
 | **File Storage**    | Cloudinary                             |
 | **Email Service**   | Resend                                 |
 | **Error Tracking**  | Sentry                                 |
-| **ORM**             | TypeORM 0.3.25                         |
+| **ORM**             | Prisma 6.12.0                          |
 
 ---
 
@@ -80,9 +80,9 @@
 
 ---
 
-## Database Entities (15 Total)
+## Database Models (15 Total)
 
-### Primary Entities
+### Primary Models
 
 1. **users** - User accounts with roles and emergency contacts
 2. **hostels** - Hostel properties with amenities and payments
@@ -93,7 +93,7 @@
 7. **reviews** - Student reviews with ratings and moderation
 8. **schools** - School/institution data with geolocation
 
-### Supporting Entities
+### Supporting Models
 
 9. **deposits** - Security deposit tracking
 10. **feedback** - General user feedback
@@ -207,9 +207,7 @@ PaymentsService
 └── PreviewUsageService
 
 BookingsService
-├── PaymentRepository
-├── RoomRepository
-├── HostelRepository
+├── PrismaService
 ├── PaystackService
 └── DepositsService
 
@@ -235,7 +233,8 @@ ReviewService
 ```bash
 PORT=1000
 NODE_ENV=development
-SUPABASE_DB_URL=postgresql://...
+DATABASE_URL=postgresql://...
+DIRECT_DATABASE_URL=postgresql://...
 JWT_SECRET=your_secret_key
 ```
 
@@ -426,17 +425,16 @@ ALTERNATIVE PATHS:
 
 ## Database Connection Details
 
-### TypeORM Configuration
+### Prisma Configuration
 
-```typescript
-{
-  type: 'postgres',
-  url: process.env.SUPABASE_DB_URL,
-  autoLoadEntities: true,
-  synchronize: false,  // Migrations managed manually
-  logging: process.env.NODE_ENV === 'development',
-  maxConnections: 10
-}
+Schema defined in `prisma/schema.prisma`.
+
+```bash
+# Generate Client
+npx prisma generate
+
+# Migration
+npx prisma migrate dev
 ```
 
 ### Connection String Format
@@ -502,7 +500,7 @@ src/
 | Resource       | URL                                  |
 | -------------- | ------------------------------------ |
 | NestJS Docs    | https://docs.nestjs.com              |
-| TypeORM Docs   | https://typeorm.io                   |
+| Prisma Docs    | https://www.prisma.io/docs           |
 | Paystack API   | https://paystack.com/docs            |
 | Cloudinary API | https://cloudinary.com/documentation |
 | Resend Email   | https://resend.com/docs              |
@@ -522,7 +520,7 @@ src/
 ├── payment/           💳 Payment processing
 ├── review/            ⭐ Reviews & ratings
 ├── admin/             👨‍💼 Admin operations
-├── entities/          🗄️ Database models
+├── prisma/             🗄️ Database models
 ├── mail/              📧 Email templates
 ├── cloudinary/        ☁️ Image storage
 ├── paystack/          🔄 Payment gateway
@@ -569,5 +567,5 @@ src/
 
 ---
 
-**Last Updated**: January 27, 2026  
+**Last Updated**: April 2026  
 **Version**: 1.0

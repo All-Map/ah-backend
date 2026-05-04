@@ -1,141 +1,139 @@
-import { Injectable, Req } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
-import { AdminVerification } from '../entities/admin-verification.entity';
-import { User } from '../entities/user.entity';
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AdminVerification } from '@prisma/client';
+import { JwtUser } from './types/jwt-user';
 import { MailService } from 'src/mail/mail.service';
 
 @Injectable()
 export class AdminVerificationService {
-  constructor(private readonly supabase: SupabaseService, private readonly mailService: MailService) {}
+  constructor(private readonly prisma: PrismaService, private readonly mailService: MailService) {}
 
   async createVerificationRequest(
-    user: User, 
+    user: JwtUser, 
     data: any, 
     idDocuments: string[], 
     hostelProofDocuments: string[]
   ): Promise<AdminVerification> {
     const verificationData = {
-      ...data,
-      user_id: user.id,
-      id_documents: idDocuments,
-      hostel_proof_documents: hostelProofDocuments,
-      status: 'pending'
+      firstName: data.firstName,
+      lastName: data.lastName,
+      mobileNumber: data.mobileNumber,
+      alternatePhone: data.alternatePhone,
+      idType: data.idType,
+      otherIdType: data.otherIdType,
+      idNumber: data.idNumber,
+      idDocuments: idDocuments,
+      termsAccepted: data.termsAccepted === 'true' || data.termsAccepted === true,
+      hostelProofType: data.hostelProofType,
+      hostelProofDocuments: hostelProofDocuments,
+      status: 'pending' as any,
+      userId: user.id,
     };
 
-    const { data: verification, error } = await this.supabase.client
-      .from('admin_verifications')
-      .insert([verificationData])
-      .select('*')
-      .single();
+    return await this.prisma.adminVerification.create({
+      data: verificationData
+    });
+  }
 
-    if (error) {
-      throw new Error(`Failed to create verification request: ${error.message}`);
+  async getVerifications(status?: string): Promise<any[]> {
+    const where: any = {};
+    if (status && status !== 'all') {
+      where.status = status;
     }
 
-    return verification;
+    return await this.prisma.adminVerification.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            phone: true,
+            schoolId: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
   }
 
-async getVerifications(status?: string): Promise<AdminVerification[]> {
-  let query = this.supabase.client
-    .from('admin_verifications')
-    .select('*, user:user_id (id, email, name, phone, school_id)');
-
-  if (status && status !== 'all') {
-    query = query.eq('status', status);
-  }
-
-  const { data, error } = await query;
-
-  if (error) throw new Error('Failed to fetch verifications');
-  return data;
-}
-
-  async getPendingVerifications(): Promise<AdminVerification[]> {
-    const { data, error } = await this.supabase.client
-      .from('admin_verifications')
-      .select('*, user:user_id (id, email, school_id)')
-      .eq('status', 'pending');
-
-    if (error) throw new Error('Failed to fetch pending verifications');
-    return data;
+  async getPendingVerifications(): Promise<any[]> {
+    return await this.prisma.adminVerification.findMany({
+      where: { status: 'pending' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            schoolId: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
   }
 
   async updateVerificationStatus(
     id: string, 
     status: 'approved' | 'rejected', 
-    reviewedBy: User,
+    reviewedBy: JwtUser,
     rejectionReason?: string
   ): Promise<AdminVerification> {
     const updateData: any = {
       status,
-      reviewed_by_id: reviewedBy.id,
-      reviewed_at: new Date().toISOString()
+      reviewedBy: reviewedBy.id, // This matches the Prisma 'reviewedBy' field which is a UUID
+      reviewedAt: new Date()
     };
 
     if (status === 'rejected' && rejectionReason) {
-      updateData.rejection_reason = rejectionReason;
+      updateData.rejectionReason = rejectionReason;
     }
 
-    const { data, error } = await this.supabase.client
-      .from('admin_verifications')
-      .update(updateData)
-      .eq('id', id)
-      .select('*')
-      .single();
-
-    if (error) throw new Error('Failed to update verification status');
+    const verification = await this.prisma.adminVerification.update({
+      where: { id },
+      data: updateData,
+    });
 
     if (status === 'approved') {
-      await this.supabase.client
-        .from('users')
-        .update({ role: 'hostel_admin' })
-        .eq('id', data.user_id);
+      await this.prisma.user.update({
+        where: { id: verification.userId },
+        data: { role: 'hostel_admin' }
+      });
 
-          const { data: user } = await this.supabase.client
-    .from('users')
-    .select('email')
-    .eq('id', data.user_id)
-    .single();
+      const user = await this.prisma.user.findUnique({
+        where: { id: verification.userId },
+        select: { email: true }
+      });
 
-  if (user && user.email) {
-    await this.mailService.sendVerificationApproval(user.email);
-  } else {
-    throw new Error('User not found or email missing for approval notification');
-  }
-} else if (status === 'rejected') {
-  const { data: user } = await this.supabase.client
-    .from('users')
-    .select('email')
-    .eq('id', data.user_id)
-    .single();
-  
-  if (user && user.email) {
-    await this.mailService.sendVerificationRejection(
-      user.email, 
-      rejectionReason ?? 'No reason provided'
-    );
-  } else {
-    throw new Error('User not found or email missing for rejection notification');
-  }
+      if (user && user.email) {
+        await this.mailService.sendVerificationApproval(user.email);
+      }
+    } else if (status === 'rejected') {
+      const user = await this.prisma.user.findUnique({
+        where: { id: verification.userId },
+        select: { email: true }
+      });
+      
+      if (user && user.email) {
+        await this.mailService.sendVerificationRejection(
+          user.email, 
+          rejectionReason ?? 'No reason provided'
+        );
+      }
     }
 
-    return data;
+    return verification;
   }
 
   async getUserVerificationStatus(userId: string): Promise<AdminVerification | null> {
-  const { data, error } = await this.supabase.client
-    .from('admin_verifications')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error('Failed to fetch verification status');
+    return await this.prisma.adminVerification.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' }
+    });
   }
-  
-  return data;
-}
-
 }

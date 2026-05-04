@@ -2,7 +2,7 @@
 import { IsUUID, IsString, IsEmail, IsEnum, IsDateString, IsNumber, IsOptional, IsArray, ValidateNested, Min, Max, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { BookingType } from 'src/entities/booking.entity';
+import { BookingType } from '@prisma/client';
 
 class EmergencyContactDto {
   @ApiProperty()
