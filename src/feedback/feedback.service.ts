@@ -148,6 +148,41 @@ export class FeedbackService {
     }
   }
 
+  async submitFeedback(
+    userId: string,
+    subject: string,
+    message: string,
+    category: FeedbackCategory | string = 'general'
+  ): Promise<any> {
+    try {
+      return await this.prisma.feedback.create({
+        data: {
+          userId,
+          subject,
+          message,
+          category: category as any,
+          status: 'pending',
+        },
+      });
+    } catch (error) {
+      console.error('Submit feedback service error:', error);
+      throw error;
+    }
+  }
+
+  async getUserFeedback(userId: string): Promise<any[]> {
+    try {
+      return await this.prisma.feedback.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      });
+    } catch (error) {
+      console.error('Get user feedback service error:', error);
+      throw error;
+    }
+  }
+
+
   // ================ PUBLIC FEEDBACK METHODS ================
 
   async submitPublicFeedback(
@@ -161,10 +196,13 @@ export class FeedbackService {
   ): Promise<any> {
     try {
       // Check if this email belongs to an existing user
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email },
-        select: { id: true, name: true, role: true }
-      });
+      let existingUser: { id: string; name: string | null; role: any } | null = null;
+      if (email) {
+        existingUser = await this.prisma.user.findUnique({
+          where: { email },
+          select: { id: true, name: true, role: true }
+        });
+      }
 
       const feedbackData: any = {
         name,

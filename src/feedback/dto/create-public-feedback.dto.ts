@@ -14,7 +14,7 @@ export class CreatePublicFeedbackDto {
 
   @IsString()
   @IsNotEmpty()
-  @Length(5, 150)
+  @Length(2, 150)
   subject: string;
 
   @IsString()

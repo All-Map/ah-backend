@@ -13,13 +13,8 @@ import {
   PublicFeedbackCategory,
 } from './feedback.types';
 
-export class PublicFeedbackDto {
-  name: string;
-  email: string;
-  subject: string;
-  message: string;
-  category?: PublicFeedbackCategory;
-}
+import { CreatePublicFeedbackDto } from './dto/create-public-feedback.dto';
+import { CreateFeedbackDto } from './dto/create-feedback.dto';
 
 @Controller('feedback')
 export class FeedbackController {
@@ -28,7 +23,7 @@ export class FeedbackController {
 
   @Post('public')
   async submitPublicFeedback(
-    @Body() feedbackDto: PublicFeedbackDto,
+    @Body() feedbackDto: CreatePublicFeedbackDto,
     @Ip() ip: string,
     @Req() req: Request
   ) {
@@ -61,28 +56,15 @@ export class FeedbackController {
   @Post('submit')
   async submitFeedback(
     @CurrentUser() user: JwtUser,
-    @Body() feedbackDto: { subject: string; message: string; category: string }
+    @Body() feedbackDto: CreateFeedbackDto
   ) {
     try {
-      const { data, error } = await this.feedbackService['supabase'].client
-        .from('feedback')
-        .insert([
-          {
-            user_id: user.id,
-            subject: feedbackDto.subject,
-            message: feedbackDto.message,
-            category: feedbackDto.category || 'general',
-            status: 'pending',
-            created_at: new Date().toISOString()
-          }
-        ])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Feedback submission error:', error);
-        throw new Error('Failed to submit feedback');
-      }
+      const data = await this.feedbackService.submitFeedback(
+        user.id,
+        feedbackDto.subject,
+        feedbackDto.message,
+        feedbackDto.category
+      );
 
       return {
         success: true,
@@ -99,16 +81,7 @@ export class FeedbackController {
   @Get('my-feedback')
   async getMyFeedback(@CurrentUser() user: JwtUser) {
     try {
-      const { data, error } = await this.feedbackService['supabase'].client
-        .from('feedback')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Fetch feedback error:', error);
-        throw new Error('Failed to fetch feedback');
-      }
+      const data = await this.feedbackService.getUserFeedback(user.id);
 
       return data;
     } catch (error) {
