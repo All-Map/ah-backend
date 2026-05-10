@@ -3,11 +3,22 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateHostelDto } from './dto/create-hostel.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UpdateHostelDto } from './dto/update-hostel.dto';
+import { SerpApiService, NearbyPlace } from '../serpapi/serpapi.service';
+
+const NEARBY_CATEGORIES = [
+  { label: 'Restaurants', query: 'restaurants' },
+  { label: 'Supermarkets', query: 'supermarket grocery store' },
+  { label: 'Schools & Universities', query: 'university college school' },
+  { label: 'Pharmacies', query: 'pharmacy chemist' },
+  { label: 'Transport', query: 'bus stop trotro station' },
+  { label: 'Banks & ATMs', query: 'bank ATM' },
+];
 
 @Injectable()
 export class HostelsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly serpApi: SerpApiService,
     private cloudinary: CloudinaryService,
   ) {}
 
@@ -523,5 +534,34 @@ export class HostelsService {
       console.error('Error in remove method:', error);
       throw error;
     }
+  }
+
+  async findNearbyPlaces(
+    hostelId: string,
+    category?: string,
+  ): Promise<{ category: string; places: NearbyPlace[] }[]> {
+    const locations: any[] = await this.prisma.$queryRaw`
+      SELECT ST_X(location::geometry) as lng, ST_Y(location::geometry) as lat
+      FROM hostels WHERE id = ${hostelId}::uuid
+    `;
+
+    if (!locations[0]?.lat || !locations[0]?.lng) {
+      return [];
+    }
+
+    const { lat, lng } = locations[0];
+
+    const categories = category
+      ? NEARBY_CATEGORIES.filter(c => c.label.toLowerCase().includes(category.toLowerCase()))
+      : NEARBY_CATEGORIES;
+
+    const results = await Promise.all(
+      categories.map(async cat => ({
+        category: cat.label,
+        places: await this.serpApi.searchNearbyPlaces(lat, lng, cat.query),
+      })),
+    );
+
+    return results.filter(r => r.places.length > 0);
   }
 }

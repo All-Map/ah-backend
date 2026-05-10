@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, UploadedFiles, UseInterceptors, Request, HttpStatus, ParseUUIDPipe, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, UploadedFiles, UseInterceptors, Request, HttpStatus, ParseUUIDPipe, Patch, Query } from '@nestjs/common';
 import { HostelsService } from './hostels.service';
 import { CreateHostelDto } from './dto/create-hostel.dto';
 import { UserRole } from '@prisma/client';
@@ -181,6 +181,16 @@ async getRoomTypeByIdStudent(
     return this.hostelsService.findOne(id);
   }
 
+  @Get(':id/nearby-places')
+  @CacheTTL(300)
+  @ApiOperation({ summary: 'Get nearby places for a hostel via SerpAPI Google Maps' })
+  @ApiParam({ name: 'id', description: 'Hostel ID' })
+  getNearbyPlaces(
+    @Param('id') id: string,
+    @Query('category') category?: string,
+  ) {
+    return this.hostelsService.findNearbyPlaces(id, category);
+  }
 
   @Put(':id')
   @Roles(UserRole.hostel_admin, UserRole.super_admin)
