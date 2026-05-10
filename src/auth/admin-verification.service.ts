@@ -1,19 +1,83 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AdminVerification } from '@prisma/client';
+import { AdminVerification, AgentPayoutMethod, Prisma } from '@prisma/client';
 import { JwtUser } from './types/jwt-user';
 import { MailService } from 'src/mail/mail.service';
+
+interface PayoutDestination {
+  // momo
+  provider?: 'mtn' | 'vodafone' | 'airteltigo' | string;
+  phone?: string;
+  // bank
+  bankName?: string;
+  bankCode?: string;
+  accountNumber?: string;
+  // both
+  accountName?: string;
+}
 
 @Injectable()
 export class AdminVerificationService {
   constructor(private readonly prisma: PrismaService, private readonly mailService: MailService) {}
 
+  /**
+   * Validate and normalise the agent's payout destination.
+   * Throws BadRequestException with a clear message if required fields are missing.
+   */
+  private parsePayoutDetails(
+    method: AgentPayoutMethod,
+    raw: any,
+  ): PayoutDestination {
+    let parsed: PayoutDestination = raw ?? {};
+    if (typeof raw === 'string') {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new BadRequestException('payoutDetails must be valid JSON');
+      }
+    }
+
+    if (method === 'momo') {
+      if (!parsed.provider) throw new BadRequestException('Mobile money provider is required');
+      if (!parsed.phone) throw new BadRequestException('Mobile money phone number is required');
+      if (!parsed.accountName) throw new BadRequestException('Account holder name is required');
+      return {
+        provider: parsed.provider,
+        phone: parsed.phone,
+        accountName: parsed.accountName,
+      };
+    }
+
+    if (method === 'bank') {
+      if (!parsed.bankName) throw new BadRequestException('Bank name is required');
+      if (!parsed.accountNumber) throw new BadRequestException('Bank account number is required');
+      if (!parsed.accountName) throw new BadRequestException('Account holder name is required');
+      return {
+        bankName: parsed.bankName,
+        bankCode: parsed.bankCode,
+        accountNumber: parsed.accountNumber,
+        accountName: parsed.accountName,
+      };
+    }
+
+    throw new BadRequestException('payoutMethod must be either "momo" or "bank"');
+  }
+
   async createVerificationRequest(
-    user: JwtUser, 
-    data: any, 
-    idDocuments: string[], 
+    user: JwtUser,
+    data: any,
+    idDocuments: string[],
     hostelProofDocuments: string[]
   ): Promise<AdminVerification> {
+    if (!data.payoutMethod) {
+      throw new BadRequestException('Payout method is required for verification');
+    }
+
+    const payoutDetails = this.parsePayoutDetails(
+      data.payoutMethod as AgentPayoutMethod,
+      data.payoutDetails,
+    );
+
     const verificationData = {
       firstName: data.firstName,
       lastName: data.lastName,
@@ -26,6 +90,8 @@ export class AdminVerificationService {
       termsAccepted: data.termsAccepted === 'true' || data.termsAccepted === true,
       hostelProofType: data.hostelProofType,
       hostelProofDocuments: hostelProofDocuments,
+      payoutMethod: data.payoutMethod as AgentPayoutMethod,
+      payoutDetails: payoutDetails as unknown as Prisma.InputJsonValue,
       status: 'pending' as any,
       userId: user.id,
     };
@@ -100,9 +166,19 @@ export class AdminVerificationService {
     });
 
     if (status === 'approved') {
+      // Promote to hostel_admin AND mirror the verified payout destination onto
+      // the User record so commissions/payouts have a single source of truth.
       await this.prisma.user.update({
         where: { id: verification.userId },
-        data: { role: 'hostel_admin' }
+        data: {
+          role: 'hostel_admin',
+          ...(verification.payoutMethod
+            ? {
+                payoutMethod: verification.payoutMethod,
+                payoutDetails: verification.payoutDetails as Prisma.InputJsonValue,
+              }
+            : {}),
+        },
       });
 
       const user = await this.prisma.user.findUnique({

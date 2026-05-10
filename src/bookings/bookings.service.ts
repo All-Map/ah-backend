@@ -23,13 +23,68 @@ import { UserGender as Gender } from '@prisma/client';
 
 @Injectable()
 export class BookingsService {
-  private readonly BOOKING_FEE = 70; 
+  private readonly BOOKING_FEE = 100;
+  private readonly AGENT_COMMISSION = 35;
+  // Hold commission for 48 hours before it becomes payable, to absorb refunds/disputes
+  private readonly COMMISSION_HOLD_HOURS = 48;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly paystackService: PaystackService,
     private readonly depositsService: DepositsService
   ) {}
+
+  /**
+   * Create the agent commission record for a booking whose booking fee just cleared.
+   * Idempotent on bookingId (unique constraint). Skips if the hostel admin record
+   * is missing or not a valid user (e.g. legacy seed data).
+   */
+  private async createAgentCommission(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    hostelId: string,
+  ): Promise<void> {
+    try {
+      const hostel = await tx.hostel.findUnique({
+        where: { id: hostelId },
+        select: { adminId: true },
+      });
+
+      if (!hostel?.adminId) {
+        console.warn(`[commission] No adminId on hostel ${hostelId} — skipping`);
+        return;
+      }
+
+      // adminId is stored as VarChar; verify it maps to a real user before crediting
+      const agent = await tx.user.findUnique({
+        where: { id: hostel.adminId },
+        select: { id: true, role: true },
+      });
+
+      if (!agent) {
+        console.warn(`[commission] adminId ${hostel.adminId} on hostel ${hostelId} is not a user — skipping`);
+        return;
+      }
+
+      const availableAt = new Date(Date.now() + this.COMMISSION_HOLD_HOURS * 60 * 60 * 1000);
+
+      await tx.agentCommission.create({
+        data: {
+          bookingId,
+          agentId: agent.id,
+          hostelId,
+          amount: this.AGENT_COMMISSION,
+          status: 'pending',
+          availableAt,
+        },
+      });
+
+      console.log(`[commission] Credited GHC ${this.AGENT_COMMISSION} to agent ${agent.id} for booking ${bookingId}`);
+    } catch (error) {
+      // Never let commission failures break booking creation
+      console.error('[commission] Failed to create commission record:', error);
+    }
+  }
 
   async verifyPayment(verifyPaymentDto: VerifyPaymentDto): Promise<any> {
     const { reference, expectedAmount } = verifyPaymentDto;
@@ -212,6 +267,9 @@ const {
           data: { availableRooms: { decrement: 1 } }
         });
       }
+
+      // Credit agent commission for the hostel owner
+      await this.createAgentCommission(tx, booking.id, hostelId);
 
       console.log('✅ Booking created successfully:', booking.id);
 
@@ -670,6 +728,9 @@ async getBookingPaymentOptions(bookingId: string, userId: string) {
         throw new ConflictException('Room was just booked by another user!');
       }
 
+      // Credit agent commission for the hostel owner
+      await this.createAgentCommission(tx, booking.id, hostelId);
+
       return booking;
     });
   }
@@ -754,28 +815,33 @@ async createBookingWithDeposit(
   createBookingDto: CreateBookingDto,
   userId: string
 ): Promise<any> {
-  const { 
-    hostelId, roomId, checkInDate, checkOutDate, 
-    bookingType, emergencyContacts, depositAmount = 70,
-    ...bookingData 
+  const {
+    hostelId, roomId, checkInDate, checkOutDate,
+    bookingType, emergencyContacts,
+    ...bookingData
   } = createBookingDto;
+
+  // Booking fee is always the platform constant (100). depositAmount on the DTO is ignored.
+  const bookingFeeAmount = this.BOOKING_FEE;
 
   console.log('🔒 Starting booking with deposit deduction for user:', userId);
 
-  // Prisma interactive transaction to ensure atomicity
+  // Step 1: Verify deposit balance OUTSIDE the transaction.
+  // depositsService.getUserDepositBalance hits the DB itself; doing it inside
+  // the tx burns the 5s window before we even start writing.
+  console.log('💰 Checking deposit balance...');
+  const depositBalance = await this.depositsService.getUserDepositBalance(userId);
+
+  if (depositBalance.availableBalance < bookingFeeAmount) {
+    throw new BadRequestException(
+      `Insufficient deposit balance. Available: GHS ${depositBalance.availableBalance.toFixed(2)}, ` +
+      `Required: GHS ${bookingFeeAmount.toFixed(2)}`
+    );
+  }
+
+  // Prisma interactive transaction to ensure atomicity (raised timeout for Supabase round-trips)
   return await this.prisma.$transaction(async (tx) => {
     try {
-      // Step 1: Verify deposit balance
-      console.log('💰 Checking deposit balance...');
-      const depositBalance = await this.depositsService.getUserDepositBalance(userId);
-      
-      if (depositBalance.availableBalance < depositAmount) {
-        throw new BadRequestException(
-          `Insufficient deposit balance. Available: GHS ${depositBalance.availableBalance.toFixed(2)}, ` +
-          `Required: GHS ${depositAmount.toFixed(2)}`
-        );
-      }
-
       // Step 2: Get user
       const user = await tx.user.findUnique({
         where: { id: userId }
@@ -873,7 +939,7 @@ async createBookingWithDeposit(
       const depositDeduction = await tx.deposit.create({
         data: {
           userId,
-          amount: -depositAmount,
+          amount: -bookingFeeAmount,
           status: DepositStatus.completed,
           depositType: DepositType.booking_deposit,
           paymentReference: paymentRef,
@@ -897,13 +963,13 @@ async createBookingWithDeposit(
           checkOutDate: checkOut,
           bookingType,
           totalAmount: totalRoomAmount,
-          amountPaid: depositAmount,
+          amountPaid: bookingFeeAmount,
           amountDue: totalRoomAmount,
           paymentDueDate,
           status: BookingStatus.confirmed,
           paymentStatus: PaymentStatus.partial,
           confirmedAt: new Date(),
-          bookingFee: depositAmount,
+          bookingFee: bookingFeeAmount,
           bookingFeePaid: true,
           paymentReference: paymentRef,
           bookingFeePaidAt: new Date(),
@@ -917,7 +983,7 @@ async createBookingWithDeposit(
       await tx.payment.create({
         data: {
           bookingId: booking.id,
-          amount: depositAmount,
+          amount: bookingFeeAmount,
           paymentMethod: PaymentMethod.account_credit,
           paymentType: PaymentType.booking_payment,
           transactionRef: paymentRef,
@@ -944,8 +1010,11 @@ async createBookingWithDeposit(
         });
       }
 
+      // Step 16: Credit agent commission for the hostel owner
+      await this.createAgentCommission(tx, booking.id, hostelId);
+
       console.log('✅ Booking created successfully:', booking.id);
-      console.log('💵 Deposit deducted:', depositAmount);
+      console.log('💵 Deposit deducted:', bookingFeeAmount);
 
       return booking;
 
@@ -953,7 +1022,7 @@ async createBookingWithDeposit(
       console.error('❌ Booking creation failed:', error);
       throw error;
     }
-  });
+  }, { timeout: 20000, maxWait: 10000 });
 }
 
 // Add this helper method to check room availability
@@ -1220,6 +1289,18 @@ private isRoomAvailable(room: any): boolean {
       } else {
         paymentStatus = PaymentStatus.paid; // Keep booking fee as non-refundable
       }
+
+      // Void any not-yet-paid commission for this booking
+      await tx.agentCommission.updateMany({
+        where: {
+          bookingId: id,
+          status: { in: ['pending', 'available', 'reserved'] },
+        },
+        data: {
+          status: 'voided',
+          notes: `Voided due to booking cancellation: ${cancelDto.reason}`,
+        },
+      });
 
       return await tx.booking.update({
         where: { id },

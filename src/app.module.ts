@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { CacheModule } from '@nestjs/cache-manager';
 import helmet from 'helmet';
 import { AppController } from './app.controller';
@@ -23,6 +24,7 @@ import { APP_FILTER } from '@nestjs/core';
 import { redisStore } from 'cache-manager-redis-store';
 import { PublicModule } from './public/public.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { CommissionsModule } from './commissions/commissions.module';
 
 @Module({
   imports: [
@@ -37,6 +39,7 @@ import { FeedbackModule } from './feedback/feedback.module';
     }),
     SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60, limit: 100 }]),
     PrismaModule,
     AuthModule,
@@ -51,7 +54,8 @@ import { FeedbackModule } from './feedback/feedback.module';
     AccessManagementModule,
     BookingManagementModule,
     FeedbackModule,
-    PublicModule
+    PublicModule,
+    CommissionsModule,
   ],
   controllers: [AppController],
   providers: [
