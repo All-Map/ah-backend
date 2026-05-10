@@ -284,12 +284,23 @@ export class HostelsService {
       const hostels = await this.prisma.hostel.findMany({
         orderBy: { createdAt: 'desc' }
       });
+
+      // Fetch locations via raw SQL (geometry columns can't be read by Prisma)
+      const hostelIds = hostels.map(h => h.id);
+      let locationMap = new Map<string, string>();
+      if (hostelIds.length > 0) {
+        const locations: any[] = await this.prisma.$queryRaw`
+          SELECT id, ST_AsText(location) as location FROM hostels WHERE id = ANY(${hostelIds}::uuid[])
+        `;
+        locationMap = new Map(locations.map(l => [l.id, l.location]));
+      }
       
       return hostels.map(h => ({
         ...h,
         base_price: h.basePrice,
         accepting_bookings: h.acceptingBookings,
         is_verified: h.isVerified,
+        location: locationMap.get(h.id) || null,
       }));
     } catch (error) {
       console.error('Error in findAll method:', error);

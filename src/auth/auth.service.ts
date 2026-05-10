@@ -647,6 +647,14 @@ async resetPassword(dto: ResetPasswordDto) {
         where: { id: user.schoolId },
         select: { id: true, name: true, domain: true }
       });
+
+      // Fetch location via raw SQL (geometry type not supported by Prisma)
+      if (school) {
+        const locations: any[] = await this.prisma.$queryRaw`
+          SELECT ST_AsText(location) as location FROM schools WHERE id = ${user.schoolId}::uuid
+        `;
+        school.location = locations[0]?.location || null;
+      }
     }
 
     const profile = this.mapUserToResponse(user, school);
@@ -679,6 +687,7 @@ async resetPassword(dto: ResetPasswordDto) {
         id: school.id,
         name: school.name,
         domain: school.domain,
+        location: school.location,
       } : undefined,
     };
   }
